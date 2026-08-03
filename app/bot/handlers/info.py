@@ -39,21 +39,21 @@ _HELP_TEXT = (
 def register(app: Client) -> None:
     """Registra `/start`, `/help`, `/ping` e `/version` em `app`."""
 
-    @app.on_message(filters.command("start"))
+    @app.on_message(filters.command("start"))  # type: ignore[misc]
     async def _start(_: Client, message: Message) -> None:
         await message.reply_text(_START_TEXT)
 
-    @app.on_message(filters.command("help"))
+    @app.on_message(filters.command("help"))  # type: ignore[misc]
     async def _help(_: Client, message: Message) -> None:
         await message.reply_text(_HELP_TEXT)
 
-    @app.on_message(filters.command("ping"))
+    @app.on_message(filters.command("ping"))  # type: ignore[misc]
     async def _ping(_: Client, message: Message) -> None:
         started = time.monotonic()
         sent = await message.reply_text("Pong!")
         elapsed_ms = (time.monotonic() - started) * 1000
         await sent.edit_text(f"Pong! `{elapsed_ms:.0f}ms`")
 
-    @app.on_message(filters.command("version"))
+    @app.on_message(filters.command("version"))  # type: ignore[misc]
     async def _version(_: Client, message: Message) -> None:
         await message.reply_text(f"telegram-video-bridge v{__version__}")

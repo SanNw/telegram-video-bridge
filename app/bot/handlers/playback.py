@@ -29,9 +29,11 @@ _logger = get_logger("bot")
 def register(app: Client, service: PlaybackService, authorized: filters.Filter) -> None:
     """Registra os comandos de reprodução em `app`, restritos por `authorized`."""
 
-    @app.on_message(filters.command("play") & authorized)
+    @app.on_message(filters.command("play") & authorized)  # type: ignore[misc]
     async def _play(_: Client, message: Message) -> None:
-        if len(message.command) < 2:
+        # `filters.command` já garante message.command/message.text populados
+        # em runtime; a checagem abaixo só satisfaz o tipo Optional do stub.
+        if message.command is None or message.text is None or len(message.command) < 2:
             await message.reply_text("Uso: `/play <arquivo local ou URL>`")
             return
         source_raw = message.text.split(maxsplit=1)[1].strip()
@@ -45,7 +47,7 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
         else:
             await message.reply_text(f"Adicionado à fila na posição {position}.")
 
-    @app.on_message(filters.command("pause") & authorized)
+    @app.on_message(filters.command("pause") & authorized)  # type: ignore[misc]
     async def _pause(_: Client, message: Message) -> None:
         try:
             await service.pause()
@@ -54,7 +56,7 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
         else:
             await message.reply_text("Chamada pausada.")
 
-    @app.on_message(filters.command("resume") & authorized)
+    @app.on_message(filters.command("resume") & authorized)  # type: ignore[misc]
     async def _resume(_: Client, message: Message) -> None:
         try:
             await service.resume()
@@ -63,7 +65,7 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
         else:
             await message.reply_text("Chamada retomada.")
 
-    @app.on_message(filters.command("stop") & authorized)
+    @app.on_message(filters.command("stop") & authorized)  # type: ignore[misc]
     async def _stop(_: Client, message: Message) -> None:
         try:
             await service.stop_playback()
@@ -72,7 +74,7 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
         else:
             await message.reply_text("Reprodução parada e chamada encerrada.")
 
-    @app.on_message(filters.command("skip") & authorized)
+    @app.on_message(filters.command("skip") & authorized)  # type: ignore[misc]
     async def _skip(_: Client, message: Message) -> None:
         try:
             next_item = await service.skip()

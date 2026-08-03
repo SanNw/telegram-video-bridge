@@ -18,6 +18,6 @@ from app.services.playback_service import PlaybackService
 def register(app: Client, service: PlaybackService, authorized: filters.Filter) -> None:
     """Registra `/status` em `app`, restrito por `authorized`."""
 
-    @app.on_message(filters.command("status") & authorized)
+    @app.on_message(filters.command("status") & authorized)  # type: ignore[misc]
     async def _status(_: Client, message: Message) -> None:
         await message.reply_text(format_status(service.status()))

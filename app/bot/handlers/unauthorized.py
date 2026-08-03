@@ -16,6 +16,6 @@ _CONTROLLED_COMMANDS = ["play", "pause", "resume", "stop", "skip", "queue", "cle
 def register(app: Client) -> None:
     """Registra o fallback de "não autorizado" para os comandos de controle."""
 
-    @app.on_message(filters.command(_CONTROLLED_COMMANDS), group=1)
+    @app.on_message(filters.command(_CONTROLLED_COMMANDS), group=1)  # type: ignore[misc]
     async def _unauthorized(_: Client, message: Message) -> None:
         await message.reply_text("Você não tem permissão para usar este comando.")
