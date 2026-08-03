@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# uv
+uv.lock.bak
+
+# Env / secrets
+.env
+*.session
+*.session-journal
+
+# Runtime data (keep directories, ignore contents)
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+media/*
+!media/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
