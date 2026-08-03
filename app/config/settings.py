@@ -35,9 +35,15 @@ class Settings(BaseSettings):
     # JSON válido e "111,222" não é JSON válido nenhum, gerando ora um `int`
     # inesperado ora um erro de parsing. NoDecode entrega a string crua direto
     # para o validador abaixo, que faz o split por vírgula.
-    authorized_user_ids: Annotated[list[int], NoDecode] = Field(
+    # "all" (case-insensitive) autoriza qualquer membro atual do grupo em
+    # `CHAT_ID` (checado em tempo real via get_chat_member) — não qualquer
+    # usuário do Telegram. Ver app/bot/auth.py.
+    authorized_user_ids: Annotated[list[int] | Literal["all"], NoDecode] = Field(
         default_factory=list,
-        description="Whitelist de user_id do Telegram autorizados a controlar o bot.",
+        description=(
+            "Whitelist de user_id do Telegram autorizados a controlar o bot, "
+            "ou 'all' para qualquer membro do grupo em CHAT_ID."
+        ),
     )
 
     # --- Logging ---
@@ -102,6 +108,8 @@ class Settings(BaseSettings):
         # (tratado abaixo) — mas um único ID, "111", É um inteiro JSON válido
         # e já chega decodificado como int, não como string.
         if isinstance(value, str):
+            if value.strip().lower() == "all":
+                return "all"
             return [int(item) for item in value.split(",") if item.strip()]
         if isinstance(value, int):
             return [value]

@@ -30,6 +30,21 @@ def test_authorized_user_ids_empty_string_yields_empty_list(
     assert settings.authorized_user_ids == []
 
 
+def test_authorized_user_ids_all_is_case_insensitive(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(authorized_user_ids="ALL")
+    assert settings.authorized_user_ids == "all"
+
+
+def test_authorized_user_ids_all_via_real_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("AUTHORIZED_USER_IDS", "all")
+    assert Settings().authorized_user_ids == "all"  # type: ignore[call-arg]
+
+
 def _base_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Configura as env vars obrigatórias, simulando carregamento real (não kwargs diretos).
 

@@ -296,6 +296,74 @@ async def test_authorized_filter_false_when_no_from_user(
     assert await authorized(None, message) is False
 
 
+class _FakeMemberCheckClient:
+    """Cliente falso só com `get_chat_member`, para exercitar `authorized_user_ids="all"`."""
+
+    def __init__(self, status: Any = None, exception: Exception | None = None) -> None:
+        self._status = status
+        self._exception = exception
+        self.calls: list[tuple[int, int]] = []
+
+    async def get_chat_member(self, chat_id: int, user_id: int) -> Any:
+        self.calls.append((chat_id, user_id))
+        if self._exception is not None:
+            raise self._exception
+        return SimpleNamespace(status=self._status)
+
+
+async def test_authorized_filter_all_true_for_current_group_member(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(authorized_user_ids="all")
+    authorized = build_authorized_filter(settings)
+    client = _FakeMemberCheckClient(status=ChatMemberStatus.MEMBER)
+    message = FakeMessage(text="/status", user_id=555)
+
+    assert await authorized(client, message) is True
+    assert client.calls == [(settings.chat_id, 555)]
+
+
+async def test_authorized_filter_all_false_for_left_member(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(authorized_user_ids="all")
+    authorized = build_authorized_filter(settings)
+    client = _FakeMemberCheckClient(status=ChatMemberStatus.LEFT)
+    message = FakeMessage(text="/status", user_id=555)
+
+    assert await authorized(client, message) is False
+
+
+async def test_authorized_filter_all_false_for_banned_member(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(authorized_user_ids="all")
+    authorized = build_authorized_filter(settings)
+    client = _FakeMemberCheckClient(status=ChatMemberStatus.BANNED)
+    message = FakeMessage(text="/status", user_id=555)
+
+    assert await authorized(client, message) is False
+
+
+async def test_authorized_filter_all_false_when_not_participant(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.errors import UserNotParticipant
+
+    settings = make_settings(authorized_user_ids="all")
+    authorized = build_authorized_filter(settings)
+    client = _FakeMemberCheckClient(exception=UserNotParticipant(400))
+    message = FakeMessage(text="/status", user_id=999)
+
+    assert await authorized(client, message) is False
+
+
 # --- comandos públicos ---
 
 

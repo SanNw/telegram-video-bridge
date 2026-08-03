@@ -121,7 +121,9 @@ camadas fiquem fora de sincronia.
 ## Comandos
 
 Autorização: comandos de controle exigem que o `user_id` esteja na whitelist
-`AUTHORIZED_USER_IDS`; fora dela, a resposta é sempre "Você não tem permissão
+`AUTHORIZED_USER_IDS` — ou, se `AUTHORIZED_USER_IDS=all`, que o usuário seja
+membro atual do grupo em `CHAT_ID` (checado em tempo real via
+`get_chat_member`); fora disso, a resposta é sempre "Você não tem permissão
 para usar este comando." `/start`, `/help`, `/ping` e `/version` são públicos
 (somente leitura, sem dado sensível).
 
@@ -285,7 +287,7 @@ cp .env.example .env
 | `API_ID`, `API_HASH` | sim | De https://my.telegram.org |
 | `SESSION_STRING` | sim | String de sessão Pyrogram/Kurigram (ver abaixo) |
 | `CHAT_ID` | sim | Chat/grupo onde a chamada acontece |
-| `AUTHORIZED_USER_IDS` | não (mas fica inutilizável sem) | `user_id` separados por vírgula |
+| `AUTHORIZED_USER_IDS` | não (mas fica inutilizável sem) | `user_id` separados por vírgula, ou `all` para qualquer membro atual do grupo em `CHAT_ID` |
 | `LOG_LEVEL`, `LOG_DIR`, `LOG_ROTATION`, `LOG_RETENTION` | não | ver seção Logs |
 | `FFMPEG_PATH`, `MEDIA_PATH` | não | padrão: `ffmpeg` no PATH, pasta `media/` |
 | `FFMPEG_MAX_CONCURRENT` | não | máx. processos FFmpeg simultâneos (v1: 1) |
