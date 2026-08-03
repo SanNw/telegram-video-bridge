@@ -1,0 +1,7 @@
+{
+  "name": "archive_org",
+  "version": "1.0.0",
+  "description": "Busca filmes de domínio público / licença aberta no Internet Archive (archive.org).",
+  "entrypoint": "plugin:Addon",
+  "min_core_version": "0.1.0"
+}

@@ -25,6 +25,10 @@ _CONTROLLED_COMMANDS = [
     "restart",
     "nowplaying",
     "uptime",
+    "addons",
+    "addon",
+    "find",
+    "pick",
 ]
 
 

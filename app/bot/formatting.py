@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from app.addon_system.base import AddonHealth, SearchResult
+from app.addon_system.manager import AddonInfo
 from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
 
@@ -65,3 +67,39 @@ def format_timedelta(delta: timedelta) -> str:
     if minutes:
         return f"{minutes}m {seconds:02d}s"
     return f"{seconds}s"
+
+
+def format_addons_list(addons: list[AddonInfo]) -> str:
+    """Formata a resposta de `/addons`."""
+    if not addons:
+        return "Nenhum addon instalado."
+    lines = ["*Addons instalados*"]
+    lines.extend(
+        f"{'✅' if addon.enabled else '⛔'} `{addon.name}` v{addon.version}" for addon in addons
+    )
+    return "\n".join(lines)
+
+
+def format_addon_info(info: AddonInfo, health: AddonHealth) -> str:
+    """Formata a resposta de `/addon info <nome>`."""
+    status = "habilitado" if info.enabled else "desabilitado"
+    health_text = "saudável" if health.healthy else f"com problema: {health.detail}"
+    lines = [
+        f"*{info.name}* v{info.version}",
+        info.description or "_sem descrição_",
+        f"Estado: {status}",
+        f"Health: {health_text}",
+    ]
+    return "\n".join(lines)
+
+
+def format_search_results(results: list[SearchResult]) -> str:
+    """Formata a resposta de `/find`."""
+    if not results:
+        return "Nenhum resultado encontrado."
+    lines = ["*Resultados*"]
+    for position, result in enumerate(results, start=1):
+        year_suffix = f" ({result.year})" if result.year else ""
+        lines.append(f"{position}. {result.title}{year_suffix} — _{result.addon_name}_")
+    lines.append("\nUse `/pick <número>` para adicionar à fila.")
+    return "\n".join(lines)

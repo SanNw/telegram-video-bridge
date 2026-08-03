@@ -15,6 +15,7 @@ from typing import Any
 
 from app.bot.client import build_bot
 from app.config.settings import get_settings
+from app.services.addon_service import AddonService
 from app.services.playback_service import PlaybackService
 from app.utils.logging import get_logger, setup_logging
 
@@ -37,9 +38,11 @@ async def _run() -> None:
     asyncio.get_running_loop().set_exception_handler(_handle_task_exception)
 
     service = PlaybackService(settings)
-    build_bot(service, settings)
+    addon_service = AddonService(settings, service)
+    build_bot(service, addon_service, settings)
 
     await service.start()
+    await addon_service.start()
     _logger.info("Telegram Video Bridge em execução.")
 
     stop_event = asyncio.Event()

@@ -26,16 +26,18 @@ def test_build_bot_registers_all_command_groups(make_settings: Callable[..., Set
 
     fake_service = MagicMock()
     fake_service.client = fake_client
+    fake_addon_service = MagicMock()
 
-    returned = build_bot(fake_service, settings)  # type: ignore[arg-type]
+    returned = build_bot(fake_service, fake_addon_service, settings)  # type: ignore[arg-type]
 
     assert returned is fake_client
     # 4 públicos (start/help/ping/version)
     # + 7 reprodução (play/pause/resume/stop/skip/volume/restart)
     # + 4 fila (queue/clear/remove/loop)
     # + 3 status (status/nowplaying/uptime)
-    # + 1 fallback = 19 handlers registrados.
-    assert len(registered) == 19
+    # + 4 addons (addons/addon/find/pick)
+    # + 1 fallback = 23 handlers registrados.
+    assert len(registered) == 23
 
 
 def test_build_bot_uses_service_client_not_a_new_session(
@@ -45,7 +47,8 @@ def test_build_bot_uses_service_client_not_a_new_session(
     fake_client = MagicMock()
     fake_service = MagicMock()
     fake_service.client = fake_client
+    fake_addon_service = MagicMock()
 
-    build_bot(fake_service, settings)  # type: ignore[arg-type]
+    build_bot(fake_service, fake_addon_service, settings)  # type: ignore[arg-type]
 
     assert fake_client.on_message.called

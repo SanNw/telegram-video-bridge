@@ -73,6 +73,27 @@ class Settings(BaseSettings):
     )
     retry_jitter_seconds: float = Field(default=1.0, ge=0)
 
+    # --- Addons ---
+    addons_path: Path = Field(
+        default=Path("addons"), description="Diretório com os addons instalados (um por subpasta)."
+    )
+    addons_state_path: Path = Field(
+        default=Path("data/addons_state.json"),
+        description="Onde persistir quais addons estão habilitados/desabilitados.",
+    )
+    addons_config_path: Path = Field(
+        default=Path("config/addons"), description="Diretório com config própria de cada addon."
+    )
+    addon_search_timeout_seconds: float = Field(
+        default=10.0, gt=0, description="Timeout por addon numa chamada de /find."
+    )
+    addon_streams_timeout_seconds: float = Field(
+        default=10.0, gt=0, description="Timeout por addon ao resolver streams (/pick)."
+    )
+    addon_search_cache_ttl_seconds: float = Field(
+        default=300.0, gt=0, description="TTL do cache de resultados de busca de addons."
+    )
+
     @field_validator("authorized_user_ids", mode="before")
     @classmethod
     def _split_authorized_user_ids(cls, value: object) -> object:

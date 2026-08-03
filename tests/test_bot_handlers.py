@@ -15,12 +15,20 @@ from typing import Any
 
 import pytest
 
+from app.addon_system.base import AddonHealth, SearchResult
+from app.addon_system.exceptions import AddonNotFoundError
+from app.addon_system.manager import AddonInfo
 from app.bot.auth import build_authorized_filter
-from app.bot.handlers import info, playback, queue, status, unauthorized
+from app.bot.handlers import addons, info, playback, queue, status, unauthorized
 from app.config.settings import Settings
 from app.player.exceptions import InvalidQueueIndexError, QueueFullError
 from app.player.models import LoopMode, PlaybackState, QueueItem
-from app.services.exceptions import InvalidVolumeError, NothingPlayingError
+from app.services.exceptions import (
+    InvalidSearchIndexError,
+    InvalidVolumeError,
+    NoStreamsAvailableError,
+    NothingPlayingError,
+)
 from app.services.models import ServiceStatus
 from app.streaming.models import FFmpegProcessState, HealthStatus
 from app.telegram.models import CallHealth, CallState
@@ -165,6 +173,66 @@ class _FakeService:
         return self._status
 
 
+class _FakeAddonService:
+    def __init__(self) -> None:
+        self.addons_list: list[AddonInfo] = []
+        self.info_result: AddonInfo | None = None
+        self.info_exception: Exception | None = None
+        self.health_result = AddonHealth(healthy=True)
+        self.enable_calls: list[str] = []
+        self.disable_calls: list[str] = []
+        self.reload_calls: list[str] = []
+        self.uninstall_calls: list[str] = []
+        self.action_exception: Exception | None = None
+        self.find_calls: list[str] = []
+        self.find_result: list[SearchResult] = []
+        self.pick_calls: list[tuple[int, int]] = []
+        self.pick_result: int = 1
+        self.pick_exception: Exception | None = None
+
+    def list_addons(self) -> list[AddonInfo]:
+        return self.addons_list
+
+    def addon_info(self, name: str) -> AddonInfo:
+        if self.info_exception is not None:
+            raise self.info_exception
+        assert self.info_result is not None
+        return self.info_result
+
+    async def addon_health(self, name: str) -> AddonHealth:
+        return self.health_result
+
+    async def enable(self, name: str) -> None:
+        if self.action_exception is not None:
+            raise self.action_exception
+        self.enable_calls.append(name)
+
+    async def disable(self, name: str) -> None:
+        if self.action_exception is not None:
+            raise self.action_exception
+        self.disable_calls.append(name)
+
+    async def reload(self, name: str) -> None:
+        if self.action_exception is not None:
+            raise self.action_exception
+        self.reload_calls.append(name)
+
+    async def uninstall(self, name: str) -> None:
+        if self.action_exception is not None:
+            raise self.action_exception
+        self.uninstall_calls.append(name)
+
+    async def find(self, query: str) -> list[SearchResult]:
+        self.find_calls.append(query)
+        return self.find_result
+
+    async def pick(self, index: int, requested_by: int) -> int:
+        if self.pick_exception is not None:
+            raise self.pick_exception
+        self.pick_calls.append((index, requested_by))
+        return self.pick_result
+
+
 @pytest.fixture
 def wired_client(
     make_settings: Callable[..., Settings],
@@ -181,6 +249,21 @@ def wired_client(
     unauthorized.register(client)  # type: ignore[arg-type]
 
     return client, service, settings
+
+
+@pytest.fixture
+def addon_wired_client(
+    make_settings: Callable[..., Settings],
+) -> tuple[FakeClient, _FakeAddonService, Settings]:
+    settings = make_settings(authorized_user_ids=[111])
+    client = FakeClient()
+    addon_service = _FakeAddonService()
+    authorized = build_authorized_filter(settings)
+
+    addons.register(client, addon_service, authorized)  # type: ignore[arg-type]
+    unauthorized.register(client)  # type: ignore[arg-type]
+
+    return client, addon_service, settings
 
 
 # --- autorização (app/bot/auth.py) ---
@@ -606,3 +689,262 @@ async def test_uptime_formats_duration(
     message = FakeMessage(text="/uptime", user_id=111)
     await dispatch(client, message)
     assert "1h" in message.replies[0]
+
+
+# --- /addons /addon /find /pick ---
+
+
+async def test_addons_authorized_lists_installed(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.addons_list = [
+        AddonInfo(name="archive_org", version="1.0.0", description="desc", enabled=True)
+    ]
+    message = FakeMessage(text="/addons", user_id=111)
+    handled = await dispatch(client, message)
+    assert handled is True
+    assert "archive_org" in message.replies[0]
+
+
+async def test_addons_unauthorized_is_rejected(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/addons", user_id=999)
+    await dispatch(client, message)
+    assert "permissão" in message.replies[0]
+
+
+async def test_addon_without_arguments_shows_usage(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/addon", user_id=111)
+    await dispatch(client, message)
+    assert "Uso:" in message.replies[0]
+
+
+async def test_addon_unknown_action(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/addon frobnicate archive_org", user_id=111)
+    await dispatch(client, message)
+    assert "desconhecida" in message.replies[0]
+
+
+async def test_addon_action_without_name_shows_usage(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/addon enable", user_id=111)
+    await dispatch(client, message)
+    assert "Uso:" in message.replies[0]
+
+
+async def test_addon_info_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.info_result = AddonInfo(
+        name="archive_org", version="1.0.0", description="desc", enabled=True
+    )
+    addon_service.health_result = AddonHealth(healthy=True)
+    message = FakeMessage(text="/addon info archive_org", user_id=111)
+    await dispatch(client, message)
+    assert "archive_org" in message.replies[0]
+    assert "saudável" in message.replies[0]
+
+
+async def test_addon_info_unknown_addon(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.info_exception = AddonNotFoundError("Addon não encontrado: 'nope'")
+    message = FakeMessage(text="/addon info nope", user_id=111)
+    await dispatch(client, message)
+    assert "não encontrado" in message.replies[0]
+
+
+async def test_addon_enable_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/addon enable archive_org", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.enable_calls == ["archive_org"]
+    assert "habilitado" in message.replies[0]
+
+
+async def test_addon_disable_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/addon disable archive_org", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.disable_calls == ["archive_org"]
+    assert "desabilitado" in message.replies[0]
+
+
+async def test_addon_reload_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/addon reload archive_org", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.reload_calls == ["archive_org"]
+    assert "recarregado" in message.replies[0]
+
+
+async def test_addon_uninstall_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/addon uninstall archive_org", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.uninstall_calls == ["archive_org"]
+    assert "removido" in message.replies[0]
+
+
+async def test_addon_action_error_is_reported(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.action_exception = AddonNotFoundError("Addon não encontrado: 'nope'")
+    message = FakeMessage(text="/addon enable nope", user_id=111)
+    await dispatch(client, message)
+    assert "não encontrado" in message.replies[0]
+
+
+async def test_find_without_query_shows_usage(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/find", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.find_calls == []
+    assert "Uso:" in message.replies[0]
+
+
+async def test_find_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.find_result = [
+        SearchResult(
+            media_id="abc", title="Night of the Living Dead", year=1968, addon_name="archive_org"
+        )
+    ]
+    message = FakeMessage(text="/find night of the living dead", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.find_calls == ["night of the living dead"]
+    assert "Night of the Living Dead" in message.replies[0]
+
+
+async def test_find_no_results(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.find_result = []
+    message = FakeMessage(text="/find nonexistent", user_id=111)
+    await dispatch(client, message)
+    assert "Nenhum resultado" in message.replies[0]
+
+
+async def test_pick_without_arguments_shows_usage(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/pick", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.pick_calls == []
+    assert "Uso:" in message.replies[0]
+
+
+async def test_pick_invalid_number(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    message = FakeMessage(text="/pick banana", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.pick_calls == []
+    assert "inválida" in message.replies[0]
+
+
+async def test_pick_success(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_result = 3
+    message = FakeMessage(text="/pick 1", user_id=111)
+    await dispatch(client, message)
+    assert addon_service.pick_calls == [(1, 111)]
+    assert "posição 3" in message.replies[0]
+
+
+async def test_pick_invalid_search_index(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_exception = InvalidSearchIndexError("Posição inválida: 5.")
+    message = FakeMessage(text="/pick 5", user_id=111)
+    await dispatch(client, message)
+    assert "Posição inválida" in message.replies[0]
+
+
+async def test_pick_no_streams_available(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_exception = NoStreamsAvailableError("Nenhuma fonte reproduzível encontrada.")
+    message = FakeMessage(text="/pick 1", user_id=111)
+    await dispatch(client, message)
+    assert "Nenhuma fonte reproduzível" in message.replies[0]
+
+
+async def test_pick_invalid_source(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_exception = InvalidSourceError("fonte inválida")
+    message = FakeMessage(text="/pick 1", user_id=111)
+    await dispatch(client, message)
+    assert "Fonte inválida" in message.replies[0]
+
+
+async def test_pick_queue_full(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_exception = QueueFullError("fila cheia")
+    message = FakeMessage(text="/pick 1", user_id=111)
+    await dispatch(client, message)
+    assert "Não foi possível adicionar" in message.replies[0]
+
+
+async def test_find_unauthorized_is_rejected(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/find something", user_id=999)
+    await dispatch(client, message)
+    assert "permissão" in message.replies[0]
+
+
+async def test_pick_unauthorized_is_rejected(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/pick 1", user_id=999)
+    await dispatch(client, message)
+    assert "permissão" in message.replies[0]
+
+
+async def test_addon_unauthorized_is_rejected(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, _, _ = addon_wired_client
+    message = FakeMessage(text="/addon enable archive_org", user_id=999)
+    await dispatch(client, message)
+    assert "permissão" in message.replies[0]

@@ -13,3 +13,11 @@ class NothingPlayingError(ServiceError):
 
 class InvalidVolumeError(ServiceError):
     """Volume fora do intervalo permitido (0-200)."""
+
+
+class InvalidSearchIndexError(ServiceError):
+    """`/pick <índice>` fora dos limites da última busca de addons (ou nenhuma busca feita)."""
+
+
+class NoStreamsAvailableError(ServiceError):
+    """O addon não devolveu nenhuma fonte reproduzível para o resultado escolhido."""
