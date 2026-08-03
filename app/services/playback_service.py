@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 
+from pyrogram import Client
+
 from app.config.settings import Settings
 from app.player.models import PlaybackState, QueueItem
 from app.player.queue_manager import QueueManager
@@ -47,6 +49,11 @@ class PlaybackService:
         self._streamer.set_completion_callback(self._handle_item_completed)
         self._streamer.set_permanent_failure_callback(self._handle_streamer_permanent_failure)
         self._call_manager.set_permanent_failure_callback(self._handle_call_permanent_failure)
+
+    @property
+    def client(self) -> Client:
+        """Cliente Pyrogram subjacente, para `bot/` registrar handlers de comando."""
+        return self._call_manager.client
 
     async def start(self) -> None:
         """Carrega a fila persistida e conecta o cliente Telegram. Não retoma reprodução."""

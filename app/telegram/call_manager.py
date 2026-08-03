@@ -200,6 +200,16 @@ class TelegramCallManager:
                 await self._on_permanent_failure()
             raise CallPermanentFailureError(str(exc)) from exc
 
+    @property
+    def client(self) -> Client:
+        """Cliente Pyrogram subjacente (mesma sessão que participa da chamada).
+
+        Exposto para que `services/` possa repassá-lo a `bot/`, que registra os
+        handlers de comando nele — evita abrir uma segunda sessão MTProto com a
+        mesma `SESSION_STRING`, o que derrubaria uma sessão pela outra.
+        """
+        return self._client
+
     def healthcheck(self) -> CallHealth:
         """Snapshot síncrono do estado atual da chamada, consultável por `services/`."""
         return CallHealth(
