@@ -10,18 +10,25 @@ dos mesmos pipes; só o processo que escreve neles é reiniciado.
 Nunca dispara comandos FFmpeg soltos: todo argv passa por `build_command`, e o
 processo é sempre criado via `asyncio.create_subprocess_exec` (lista de argumentos,
 nunca shell=True) — elimina risco de injeção de shell.
+
+Supervisão: existe exatamente UMA task de supervisão (`_supervise`) por sessão de
+reprodução (do `start()`/`change_source()` até o próximo `stop()`/`change_source()`).
+Todo reinício automático acontece dentro do laço dessa mesma task — nunca cria uma
+task de supervisão nova a cada tentativa, o que causaria uma explosão de tasks
+concorrentes se o processo falhar repetidas vezes em sequência rápida.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from app.config.settings import Settings
-from app.streaming.exceptions import FFmpegPermanentFailureError, FFmpegStreamerError
+from app.streaming.exceptions import FFmpegStreamerError
 from app.streaming.models import FFmpegProcessState, HealthStatus
 from app.utils.logging import get_logger
 from app.utils.media_contract import (
@@ -33,7 +40,7 @@ from app.utils.media_contract import (
     VIDEO_PIXEL_FORMAT,
     VIDEO_WIDTH,
 )
-from app.utils.retry import RetryExhaustedError, RetryPolicy, retry_with_backoff
+from app.utils.retry import RetryPolicy
 from app.utils.sanitize import MediaSource, SourceType
 
 _ffmpeg_logger = get_logger("ffmpeg")
@@ -60,7 +67,7 @@ class FFmpegStreamer:
         self._stopping_intentionally = False
 
         self._lock = asyncio.Lock()
-        self._monitor_task: asyncio.Task[None] | None = None
+        self._supervisor_task: asyncio.Task[None] | None = None
         self._healthcheck_task: asyncio.Task[None] | None = None
         self._pump_tasks: list[asyncio.Task[None]] = []
         self._on_permanent_failure: Callable[[], Awaitable[None]] | None = None
@@ -137,9 +144,44 @@ class FFmpegStreamer:
         async with self._lock:
             if self._process is not None and self._process.returncode is None:
                 raise FFmpegStreamerError("FFmpeg já está em execução; use change_source().")
-            await self._start_locked(source)
+            await self._launch(source)
+        self._spawn_supervisor(source)
 
-    async def _start_locked(self, source: MediaSource) -> None:
+    async def stop(self) -> None:
+        """Encerra o FFmpeg de forma graciosa (SIGTERM, depois SIGKILL se necessário)."""
+        async with self._lock:
+            await self._stop_locked()
+
+    async def restart(self) -> None:
+        """Reinicia o FFmpeg mantendo a fonte atual (reinício manual, sem contar retries)."""
+        source = self._current_source
+        if source is None:
+            raise FFmpegStreamerError("Nenhuma fonte ativa para reiniciar.")
+        async with self._lock:
+            await self._stop_locked()
+            self._restart_count += 1
+            await self._launch(source)
+        self._spawn_supervisor(source)
+
+    async def change_source(self, source: MediaSource) -> None:
+        """Troca a fonte sem exigir reconexão da chamada: só o writer dos pipes muda."""
+        async with self._lock:
+            await self._stop_locked()
+            await self._launch(source)
+        self._spawn_supervisor(source)
+
+    def healthcheck(self) -> HealthStatus:
+        """Snapshot síncrono do estado atual, consultável por `services/` a qualquer momento."""
+        return HealthStatus(
+            state=self._state,
+            pid=self._process.pid if self._process is not None else None,
+            current_source=self._current_source.raw if self._current_source is not None else None,
+            restart_count=self._restart_count,
+            last_error=self._last_error,
+        )
+
+    async def _launch(self, source: MediaSource) -> None:
+        """Spawna o processo FFmpeg para `source`. Não gerencia a task de supervisão."""
         if (
             not shutil.which(self._settings.ffmpeg_path)
             and not Path(self._settings.ffmpeg_path).is_file()
@@ -151,6 +193,7 @@ class FFmpegStreamer:
         self._ensure_pipes()
         self._state = FFmpegProcessState.STARTING
         self._stopping_intentionally = False
+        self._cancel_pump_tasks()
         command = self.build_command(source)
         _ffmpeg_logger.debug("Iniciando FFmpeg para {source}", source=source.raw)
 
@@ -171,23 +214,23 @@ class FFmpegStreamer:
             asyncio.create_task(self._pump_stream(self._process.stdout, level="DEBUG")),
             asyncio.create_task(self._pump_stream(self._process.stderr, level="WARNING")),
         ]
-        self._monitor_task = asyncio.create_task(self._monitor(self._process))
         if self._healthcheck_task is None or self._healthcheck_task.done():
             self._healthcheck_task = asyncio.create_task(self._periodic_healthcheck())
 
-    async def stop(self) -> None:
-        """Encerra o FFmpeg de forma graciosa (SIGTERM, depois SIGKILL se necessário)."""
-        async with self._lock:
-            await self._stop_locked()
+    def _spawn_supervisor(self, source: MediaSource) -> None:
+        if self._supervisor_task is not None and not self._supervisor_task.done():
+            self._supervisor_task.cancel()
+        self._supervisor_task = asyncio.create_task(self._supervise(source))
 
     async def _stop_locked(self) -> None:
         self._stopping_intentionally = True
+        if self._supervisor_task is not None:
+            self._supervisor_task.cancel()
+            self._supervisor_task = None
         if self._healthcheck_task is not None:
             self._healthcheck_task.cancel()
             self._healthcheck_task = None
-        for task in self._pump_tasks:
-            task.cancel()
-        self._pump_tasks = []
+        self._cancel_pump_tasks()
         if self._process is not None and self._process.returncode is None:
             self._process.terminate()
             try:
@@ -195,96 +238,82 @@ class FFmpegStreamer:
             except TimeoutError:
                 self._process.kill()
                 await self._process.wait()
-        if self._monitor_task is not None:
-            self._monitor_task.cancel()
-            self._monitor_task = None
         self._process = None
         self._state = FFmpegProcessState.STOPPED
 
-    async def restart(self) -> None:
-        """Reinicia o FFmpeg mantendo a fonte atual (reinício manual, sem contar retries)."""
-        async with self._lock:
-            source = self._current_source
-            if source is None:
-                raise FFmpegStreamerError("Nenhuma fonte ativa para reiniciar.")
-            await self._stop_locked()
-            self._restart_count += 1
-            await self._start_locked(source)
+    def _cancel_pump_tasks(self) -> None:
+        for task in self._pump_tasks:
+            task.cancel()
+        self._pump_tasks = []
 
-    async def change_source(self, source: MediaSource) -> None:
-        """Troca a fonte sem exigir reconexão da chamada: só o writer dos pipes muda."""
-        async with self._lock:
-            await self._stop_locked()
-            await self._start_locked(source)
+    async def _supervise(self, source: MediaSource) -> None:
+        """Laço único de supervisão: aguarda o processo, reage a EOF ou falha.
 
-    def healthcheck(self) -> HealthStatus:
-        """Snapshot síncrono do estado atual, consultável por `services/` a qualquer momento."""
-        return HealthStatus(
-            state=self._state,
-            pid=self._process.pid if self._process is not None else None,
-            current_source=self._current_source.raw if self._current_source is not None else None,
-            restart_count=self._restart_count,
-            last_error=self._last_error,
-        )
-
-    async def _monitor(self, process: asyncio.subprocess.Process) -> None:
-        returncode = await process.wait()
-        if self._stopping_intentionally:
-            return
-        if returncode == 0:
-            _streaming_logger.info("FFmpeg concluiu a fonte atual (EOF).")
-            self._state = FFmpegProcessState.IDLE
-            if self._on_completion is not None:
-                await self._on_completion()
-            return
-        self._last_error = f"FFmpeg encerrou inesperadamente (código {returncode})."
-        _streaming_logger.error(self._last_error)
-        await self._attempt_auto_restart()
-
-    async def _attempt_auto_restart(self) -> None:
-        source = self._current_source
-        if source is None:
-            self._state = FFmpegProcessState.FAILED
-            return
-
-        self._state = FFmpegProcessState.RESTARTING
+        Todo reinício automático desta sessão de reprodução acontece aqui dentro,
+        sequencialmente — nunca cria uma nova task de supervisão por tentativa.
+        """
         policy = RetryPolicy(
             base_delay_seconds=self._settings.retry_base_delay_seconds,
             max_delay_seconds=self._settings.retry_max_delay_seconds,
             max_attempts=self._settings.retry_max_attempts,
             jitter_seconds=self._settings.retry_jitter_seconds,
         )
+        consecutive_failures = 0
 
-        async def _try_restart() -> None:
-            async with self._lock:
-                self._restart_count += 1
-                await self._start_locked(source)
+        while True:
+            process = self._process
+            if process is None:
+                return
+            returncode = await process.wait()
+            if self._stopping_intentionally:
+                return
 
-        try:
-            await retry_with_backoff(_try_restart, policy)
-            _streaming_logger.info("FFmpeg reiniciado automaticamente após falha.")
-        except RetryExhaustedError as exc:
-            self._state = FFmpegProcessState.FAILED
-            self._last_error = str(exc)
-            _streaming_logger.error(
-                "Falha permanente do FFmpeg após {n} tentativas: {err}",
-                n=policy.max_attempts,
-                err=exc,
-            )
-            if self._on_permanent_failure is not None:
-                await self._on_permanent_failure()
-            raise FFmpegPermanentFailureError(str(exc)) from exc
+            if returncode == 0:
+                _streaming_logger.info("FFmpeg concluiu a fonte atual (EOF).")
+                self._state = FFmpegProcessState.IDLE
+                if self._on_completion is not None:
+                    await self._on_completion()
+                return
+
+            consecutive_failures += 1
+            self._last_error = f"FFmpeg encerrou inesperadamente (código {returncode})."
+            _streaming_logger.error(self._last_error)
+
+            if consecutive_failures > policy.max_attempts:
+                self._state = FFmpegProcessState.FAILED
+                _streaming_logger.error(
+                    "Falha permanente do FFmpeg após {n} tentativas.", n=policy.max_attempts
+                )
+                if self._on_permanent_failure is not None:
+                    await self._on_permanent_failure()
+                return
+
+            delay = policy.delay_for_attempt(consecutive_failures)
+            self._state = FFmpegProcessState.RESTARTING
+            await asyncio.sleep(delay)
+
+            try:
+                async with self._lock:
+                    self._restart_count += 1
+                    await self._launch(source)
+            except FFmpegStreamerError as exc:
+                self._last_error = str(exc)
+                self._state = FFmpegProcessState.FAILED
+                _streaming_logger.error(
+                    "Falha permanente ao tentar reiniciar o FFmpeg: {err}", err=exc
+                )
+                if self._on_permanent_failure is not None:
+                    await self._on_permanent_failure()
+                return
 
     async def _pump_stream(self, stream: asyncio.StreamReader | None, *, level: str) -> None:
         if stream is None:
             return
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             async for raw_line in stream:
                 line = raw_line.decode(errors="replace").rstrip()
                 if line:
                     _ffmpeg_logger.log(level, line)
-        except asyncio.CancelledError:
-            pass
 
     def _ensure_pipes(self) -> None:
         self._pipes_dir.mkdir(parents=True, exist_ok=True)
@@ -294,9 +323,7 @@ class FFmpegStreamer:
 
     async def _periodic_healthcheck(self) -> None:
         interval = self._settings.ffmpeg_healthcheck_interval_seconds
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             while True:
                 await asyncio.sleep(interval)
                 _streaming_logger.debug("Healthcheck FFmpeg: {status}", status=self.healthcheck())
-        except asyncio.CancelledError:
-            pass
