@@ -6,9 +6,19 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 dependencies = [
-    "pyrogram>=2.0.106",
+    # kurigram: fork ativamente mantido do Pyrogram (mesmo namespace de import
+    # `pyrogram`, drop-in). O Pyrogram oficial está sem release desde abril/2023
+    # e ficou incompatível com o py-tgcalls atual (falta pyrogram.errors.
+    # GroupcallForbidden, usado internamente pelo adapter do py-tgcalls) —
+    # confirmado em teste real de import, não é só uma preocupação teórica.
+    "kurigram>=2.2.24",
     "tgcrypto>=1.2.5",
-    "py-tgcalls[pyrogram]>=2.3.3",
+    # Sem o extra [pyrogram]: puxaria também o pacote PyPI oficial "pyrogram"
+    # (obsoleto), que instala no mesmo caminho `pyrogram/` que o kurigram —
+    # conflito de instalação. O py-tgcalls importa `pyrogram.*` de forma
+    # preguiçosa (só quando o client passado é reconhecido como tal), então
+    # o namespace fornecido pelo kurigram já é suficiente.
+    "py-tgcalls>=2.3.3",
     "uvloop>=0.21.0; sys_platform != 'win32'",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",

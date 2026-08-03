@@ -382,6 +382,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kurigram"
+version = "2.2.24"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyaes" },
+    { name = "python-socks" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/0a/6cd1ced210b02cabef151aa17c193418528c6d49f9d4368a2e0975d11f96/kurigram-2.2.24.tar.gz", hash = "sha256:535644dcb23696ae7d838a2f8c14675a5b3fa50906d51dc1434a29620d62813b", size = 602931, upload-time = "2026-07-11T11:29:54.136Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/59/e5f953421b8229805a9f63e55accaa215fce126f75cd66e0a909c1d5ff18/kurigram-2.2.24-py3-none-any.whl", hash = "sha256:ec8417c8f767d974bb54cd19966d0057871c1b63faeb096f7a674702e3531824", size = 5799272, upload-time = "2026-07-11T11:29:52.31Z" },
+]
+
+[[package]]
 name = "librt"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
@@ -738,11 +751,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/6d/d9/45bdc6c85ed6bdfb55b8ab2e60e048872d9c5db42fa16bc41a91b1de6d88/py_tgcalls-2.3.3-py3-none-any.whl", hash = "sha256:797c4f6677f3fc48f073852f21ebe578e42562a57a873a8ab6393583759d3ad8", size = 80755, upload-time = "2026-06-16T19:24:18.84Z" },
 ]
 
-[package.optional-dependencies]
-pyrogram = [
-    { name = "pyrogram" },
-]
-
 [[package]]
 name = "pyaes"
 version = "1.6.1"
@@ -844,28 +852,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyrogram"
-version = "2.0.106"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyaes" },
-    { name = "pysocks" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/8e/5d09eca17271320bb9a95e50b7e053770aee85b3fd338e8267e7b6b280ae/Pyrogram-2.0.106.tar.gz", hash = "sha256:30202995758fcb6e0f91224704ab7fedefea454297724bd70a6a71a23748c16f", size = 345997, upload-time = "2023-04-30T18:24:45.506Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/88/502ec24914d208e06baa6f27ff812f46815bb4f302018ad848ebf518abdf/Pyrogram-2.0.106-py3-none-any.whl", hash = "sha256:32b62b3d93030b1080cbe45b88c0e8790cf4e2179cf3321ede810d48edf97bc7", size = 3573685, upload-time = "2023-04-30T18:24:41.986Z" },
-]
-
-[[package]]
-name = "pysocks"
-version = "1.7.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz", hash = "sha256:3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0", size = 284429, upload-time = "2019-09-20T02:07:35.714Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/59/b4572118e098ac8e46e399a1dd0f2d85403ce8bbaad9ec79373ed6badaf9/PySocks-1.7.1-py3-none-any.whl", hash = "sha256:2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5", size = 16725, upload-time = "2019-09-20T02:06:22.938Z" },
-]
-
-[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -914,6 +900,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "python-socks"
+version = "2.8.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/0b/cd77011c1bc01b76404f7aba07fca18aca02a19c7626e329b40201217624/python_socks-2.8.1.tar.gz", hash = "sha256:698daa9616d46dddaffe65b87db222f2902177a2d2b2c0b9a9361df607ab3687", size = 38909, upload-time = "2026-02-16T05:24:00.745Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/fe/9a58cb6eec633ff6afae150ca53c16f8cc8b65862ccb3d088051efdfceb7/python_socks-2.8.1-py3-none-any.whl", hash = "sha256:28232739c4988064e725cdbcd15be194743dd23f1c910f784163365b9d7be035", size = 55087, upload-time = "2026-02-16T05:23:59.147Z" },
 ]
 
 [[package]]
@@ -984,11 +979,11 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
+    { name = "kurigram" },
     { name = "loguru" },
-    { name = "py-tgcalls", extra = ["pyrogram"] },
+    { name = "py-tgcalls" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyrogram" },
     { name = "rich" },
     { name = "tgcrypto" },
     { name = "uvloop", marker = "sys_platform != 'win32'" },
@@ -1008,11 +1003,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
+    { name = "kurigram", specifier = ">=2.2.24" },
     { name = "loguru", specifier = ">=0.7.2" },
-    { name = "py-tgcalls", extras = ["pyrogram"], specifier = ">=2.3.3" },
+    { name = "py-tgcalls", specifier = ">=2.3.3" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
-    { name = "pyrogram", specifier = ">=2.0.106" },
     { name = "rich", specifier = ">=13.9" },
     { name = "tgcrypto", specifier = ">=1.2.5" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.21.0" },

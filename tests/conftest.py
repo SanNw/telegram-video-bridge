@@ -11,6 +11,18 @@ import pytest
 from app.config.settings import Settings
 
 
+@pytest.fixture(autouse=True)
+def _isolate_from_real_dotenv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isola os testes de um `.env` real na raiz do projeto (ex.: o de um dev local).
+
+    `Settings.model_config` resolve `env_file=".env"` relativo ao cwd. Testes que
+    constroem `Settings(...)` sem passar por todos os campos obrigatórios (ex.:
+    verificando que um campo ausente levanta erro) ficariam vulneráveis a pegar
+    valores de um `.env` real sentado no diretório do projeto durante `pytest`.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def make_settings(tmp_path: Path) -> Callable[..., Settings]:
     """Fábrica de `Settings` de teste, isolada em `tmp_path`. Retries rápidos por padrão."""

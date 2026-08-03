@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -30,7 +30,12 @@ class Settings(BaseSettings):
     chat_id: int
 
     # --- Autorização do bot ---
-    authorized_user_ids: list[int] = Field(
+    # NoDecode: sem isso, pydantic-settings tenta decodificar a env var como
+    # JSON antes do field_validator rodar — "111" (um único ID) é um inteiro
+    # JSON válido e "111,222" não é JSON válido nenhum, gerando ora um `int`
+    # inesperado ora um erro de parsing. NoDecode entrega a string crua direto
+    # para o validador abaixo, que faz o split por vírgula.
+    authorized_user_ids: Annotated[list[int], NoDecode] = Field(
         default_factory=list,
         description="Whitelist de user_id do Telegram autorizados a controlar o bot.",
     )
@@ -71,8 +76,14 @@ class Settings(BaseSettings):
     @field_validator("authorized_user_ids", mode="before")
     @classmethod
     def _split_authorized_user_ids(cls, value: object) -> object:
+        # pydantic-settings tenta decodificar a env var como JSON antes deste
+        # validador rodar. "111,222" não é JSON válido e chega aqui como str
+        # (tratado abaixo) — mas um único ID, "111", É um inteiro JSON válido
+        # e já chega decodificado como int, não como string.
         if isinstance(value, str):
             return [int(item) for item in value.split(",") if item.strip()]
+        if isinstance(value, int):
+            return [value]
         return value
 
     @field_validator("retry_max_delay_seconds")

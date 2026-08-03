@@ -30,6 +30,42 @@ def test_authorized_user_ids_empty_string_yields_empty_list(
     assert settings.authorized_user_ids == []
 
 
+def _base_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Configura as env vars obrigatórias, simulando carregamento real (não kwargs diretos).
+
+    Regressão: pydantic-settings tenta decodificar env vars de campos complexos
+    como JSON antes de qualquer `field_validator` rodar. Um único ID
+    ("AUTHORIZED_USER_IDS=111") É um inteiro JSON válido e chega já decodificado
+    como `int`, diferente de "111,222" (não é JSON, chega como `str`) — só
+    aparece passando por env vars de verdade, não construindo `Settings(**kwargs)`
+    diretamente (por isso este teste usa `monkeypatch.setenv`, não `make_settings`).
+    """
+    monkeypatch.setenv("API_ID", "1")
+    monkeypatch.setenv("API_HASH", "hash")
+    monkeypatch.setenv("SESSION_STRING", "session")
+    monkeypatch.setenv("CHAT_ID", "-100")
+    monkeypatch.setenv("MEDIA_PATH", str(tmp_path))
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("QUEUE_DATA_PATH", str(tmp_path / "queue.json"))
+    monkeypatch.chdir(tmp_path)
+
+
+def test_authorized_user_ids_single_value_via_real_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("AUTHORIZED_USER_IDS", "111")
+    assert Settings().authorized_user_ids == [111]  # type: ignore[call-arg]
+
+
+def test_authorized_user_ids_multiple_values_via_real_env_var(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("AUTHORIZED_USER_IDS", "111,222")
+    assert Settings().authorized_user_ids == [111, 222]  # type: ignore[call-arg]
+
+
 def test_masked_dict_never_exposes_secrets(make_settings: Callable[..., Settings]) -> None:
     settings = make_settings(api_hash="super-secret-hash", session_string="super-secret-session")
     masked = settings.masked_dict()

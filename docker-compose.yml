@@ -1,0 +1,18 @@
+services:
+  bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: telegram-video-bridge
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - logs:/app/logs
+      - media:/app/media
+      - data:/app/data
+
+volumes:
+  logs:
+  media:
+  data:
