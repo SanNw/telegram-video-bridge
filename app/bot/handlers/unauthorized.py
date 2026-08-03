@@ -10,7 +10,22 @@ from __future__ import annotations
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-_CONTROLLED_COMMANDS = ["play", "pause", "resume", "stop", "skip", "queue", "clear", "status"]
+_CONTROLLED_COMMANDS = [
+    "play",
+    "pause",
+    "resume",
+    "stop",
+    "skip",
+    "queue",
+    "clear",
+    "status",
+    "remove",
+    "loop",
+    "volume",
+    "restart",
+    "nowplaying",
+    "uptime",
+]
 
 
 def register(app: Client) -> None:

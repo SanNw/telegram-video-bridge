@@ -9,3 +9,7 @@ class ServiceError(Exception):
 
 class NothingPlayingError(ServiceError):
     """Comando de controle de reprodução (pause/resume/skip/stop) sem reprodução ativa."""
+
+
+class InvalidVolumeError(ServiceError):
+    """Volume fora do intervalo permitido (0-200)."""

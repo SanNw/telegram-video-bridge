@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.player.models import PlaybackState
+from datetime import datetime, timedelta
+
+from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
 
 
@@ -36,3 +38,30 @@ def format_queue(state: PlaybackState) -> str:
             f"{position}. `{item.source.raw}`" for position, item in enumerate(state.items, start=1)
         )
     return "\n".join(lines)
+
+
+def format_now_playing(item: QueueItem, started_at: datetime) -> str:
+    """Formata a resposta de `/nowplaying`."""
+    elapsed = datetime.now(started_at.tzinfo) - started_at
+    return (
+        f"▶️ Tocando agora: `{item.source.raw}`\n"
+        f"Pedido por: `{item.requested_by}`\n"
+        f"Tocando há: {format_timedelta(elapsed)}"
+    )
+
+
+def format_uptime(uptime: timedelta) -> str:
+    """Formata a resposta de `/uptime`."""
+    return f"Em execução há {format_timedelta(uptime)}."
+
+
+def format_timedelta(delta: timedelta) -> str:
+    """Formata uma duração como `1h 02m 03s` (omite unidades zeradas à esquerda)."""
+    total_seconds = int(delta.total_seconds())
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"

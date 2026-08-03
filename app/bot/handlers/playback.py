@@ -1,10 +1,12 @@
-"""Comandos de reprodução: `/play`, `/pause`, `/resume`, `/stop`, `/skip`.
+"""Comandos de reprodução: `/play`, `/pause`, `/resume`, `/stop`, `/skip`,
+`/volume`, `/restart`.
 
 Autorização: exigida (whitelist de `user_id`); usuário fora da whitelist recebe
 a resposta padrão de `handlers/unauthorized.py`.
 
 Erros: `/play` com fonte inválida responde com o motivo (`InvalidSourceError`);
-com fila cheia, responde com o limite atingido (`QueueFullError`). Os demais
+com fila cheia, responde com o limite atingido (`QueueFullError`). `/volume`
+fora de 0-200 responde com o motivo (`InvalidVolumeError`). Os demais
 comandos, chamados sem reprodução ativa, respondem "Nada está tocando no momento."
 (`NothingPlayingError`). Nenhum erro chega a derrubar o processo — todos são
 capturados aqui e viram uma resposta ao usuário.
@@ -18,7 +20,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from app.player.exceptions import QueueFullError
-from app.services.exceptions import NothingPlayingError
+from app.services.exceptions import InvalidVolumeError, NothingPlayingError
 from app.services.playback_service import PlaybackService
 from app.utils.logging import get_logger
 from app.utils.sanitize import InvalidSourceError
@@ -85,3 +87,29 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
                 await message.reply_text("Fila vazia; reprodução encerrada.")
             else:
                 await message.reply_text(f"Tocando agora: `{next_item.source.raw}`")
+
+    @app.on_message(filters.command("volume") & authorized)  # type: ignore[misc]
+    async def _volume(_: Client, message: Message) -> None:
+        if message.command is None or len(message.command) < 2:
+            await message.reply_text("Uso: `/volume <0-200>`")
+            return
+        try:
+            volume = int(message.command[1])
+        except ValueError:
+            await message.reply_text("Volume inválido: precisa ser um número.")
+            return
+        try:
+            await service.set_volume(volume)
+        except (NothingPlayingError, InvalidVolumeError) as exc:
+            await message.reply_text(str(exc))
+        else:
+            await message.reply_text(f"Volume ajustado para {volume}.")
+
+    @app.on_message(filters.command("restart") & authorized)  # type: ignore[misc]
+    async def _restart(_: Client, message: Message) -> None:
+        try:
+            await service.restart_current()
+        except NothingPlayingError as exc:
+            await message.reply_text(str(exc))
+        else:
+            await message.reply_text("Item atual reiniciado.")

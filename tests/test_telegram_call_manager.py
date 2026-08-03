@@ -30,6 +30,7 @@ class _FakePyTgCalls:
         self.leave_call = AsyncMock()
         self.pause = AsyncMock()
         self.resume = AsyncMock()
+        self.change_volume_call = AsyncMock()
         self.start = AsyncMock()
         self.registered_handlers: list[tuple[object, Callable[..., object]]] = []
 
@@ -244,3 +245,27 @@ async def test_stream_end_handler_triggers_reconnect(
     await stream_end_handler(fake_call_py, fake_update)
 
     fake_call_py.play.assert_awaited_once()
+
+
+async def test_change_volume_invokes_change_volume_call(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+) -> None:
+    manager, fake_call_py = make_call_manager(chat_id=-100999)
+    await manager.change_volume(150)
+    fake_call_py.change_volume_call.assert_awaited_once_with(-100999, 150)
+
+
+async def test_change_volume_swallows_not_in_call_error(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+) -> None:
+    manager, fake_call_py = make_call_manager()
+    fake_call_py.change_volume_call.side_effect = NotInCallError()
+    await manager.change_volume(50)  # não deve levantar
+
+
+async def test_change_volume_swallows_no_active_group_call(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+) -> None:
+    manager, fake_call_py = make_call_manager()
+    fake_call_py.change_volume_call.side_effect = NoActiveGroupCall()
+    await manager.change_volume(50)  # não deve levantar

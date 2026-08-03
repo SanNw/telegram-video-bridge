@@ -151,6 +151,11 @@ class TelegramCallManager:
         with contextlib.suppress(NotInCallError):
             await self._call_py.resume(self._chat_id)
 
+    async def change_volume(self, volume: int) -> None:
+        """Ajusta o volume da chamada (0-200)."""
+        with contextlib.suppress(NotInCallError, NoActiveGroupCall):
+            await self._call_py.change_volume_call(self._chat_id, volume)
+
     async def leave_call(self) -> None:
         """Sai da chamada. Idempotente: não levanta erro se já não estiver em uma chamada."""
         async with self._lock:

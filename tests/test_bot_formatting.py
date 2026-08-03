@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from app.bot.formatting import format_queue, format_status
+from datetime import UTC, datetime, timedelta
+
+from app.bot.formatting import (
+    format_now_playing,
+    format_queue,
+    format_status,
+    format_timedelta,
+    format_uptime,
+)
 from app.player.models import LoopMode, PlaybackState, QueueItem
 from app.services.models import ServiceStatus
 from app.streaming.models import FFmpegProcessState, HealthStatus
@@ -81,3 +89,28 @@ def test_format_status_degraded_includes_reason() -> None:
     text = format_status(status)
     assert "Degradado" in text
     assert "FFmpeg falhou permanentemente." in text
+
+
+def test_format_timedelta_seconds_only() -> None:
+    assert format_timedelta(timedelta(seconds=42)) == "42s"
+
+
+def test_format_timedelta_minutes_and_seconds() -> None:
+    assert format_timedelta(timedelta(minutes=5, seconds=3)) == "5m 03s"
+
+
+def test_format_timedelta_hours_minutes_seconds() -> None:
+    assert format_timedelta(timedelta(hours=1, minutes=2, seconds=3)) == "1h 02m 03s"
+
+
+def test_format_now_playing_includes_source_and_requester() -> None:
+    item = _item("filme.mp4")
+    started_at = datetime.now(UTC) - timedelta(minutes=1)
+    text = format_now_playing(item, started_at)
+    assert "filme.mp4" in text
+    assert "1" in text  # requested_by
+
+
+def test_format_uptime_includes_duration() -> None:
+    text = format_uptime(timedelta(hours=2))
+    assert "2h" in text

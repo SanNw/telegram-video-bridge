@@ -9,6 +9,7 @@ roteamento/autorização é a mesma do código de produção.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -17,9 +18,9 @@ import pytest
 from app.bot.auth import build_authorized_filter
 from app.bot.handlers import info, playback, queue, status, unauthorized
 from app.config.settings import Settings
-from app.player.exceptions import QueueFullError
+from app.player.exceptions import InvalidQueueIndexError, QueueFullError
 from app.player.models import LoopMode, PlaybackState, QueueItem
-from app.services.exceptions import NothingPlayingError
+from app.services.exceptions import InvalidVolumeError, NothingPlayingError
 from app.services.models import ServiceStatus
 from app.streaming.models import FFmpegProcessState, HealthStatus
 from app.telegram.models import CallHealth, CallState
@@ -79,6 +80,15 @@ class _FakeService:
         self.skip_result: QueueItem | None = None
         self.skip_exception: Exception | None = None
         self.cleared = False
+        self.volume_calls: list[int] = []
+        self.volume_exception: Exception | None = None
+        self.restart_exception: Exception | None = None
+        self.restart_called = False
+        self.remove_result: QueueItem | None = None
+        self.remove_exception: Exception | None = None
+        self.loop_calls: list[LoopMode] = []
+        self.now_playing_result: tuple[QueueItem, datetime] | None = None
+        self.uptime_result: timedelta = timedelta(0)
         self._status = ServiceStatus(
             streaming=HealthStatus(
                 state=FFmpegProcessState.RUNNING,
@@ -122,6 +132,31 @@ class _FakeService:
 
     async def clear_queue(self) -> None:
         self.cleared = True
+
+    async def set_volume(self, volume: int) -> None:
+        if self.volume_exception is not None:
+            raise self.volume_exception
+        self.volume_calls.append(volume)
+
+    async def restart_current(self) -> None:
+        if self.restart_exception is not None:
+            raise self.restart_exception
+        self.restart_called = True
+
+    async def remove_from_queue(self, position: int) -> QueueItem:
+        if self.remove_exception is not None:
+            raise self.remove_exception
+        assert self.remove_result is not None
+        return self.remove_result
+
+    async def set_loop_mode(self, mode: LoopMode) -> None:
+        self.loop_calls.append(mode)
+
+    def now_playing(self) -> tuple[QueueItem, datetime] | None:
+        return self.now_playing_result
+
+    def uptime(self) -> timedelta:
+        return self.uptime_result
 
     def queue_snapshot(self) -> PlaybackState:
         return self._queue_snapshot
@@ -374,7 +409,24 @@ async def test_status_formats_service_status(
     assert "Status" in message.replies[0]
 
 
-@pytest.mark.parametrize("command", ["queue", "clear", "status", "pause", "resume", "stop", "skip"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "queue",
+        "clear",
+        "status",
+        "pause",
+        "resume",
+        "stop",
+        "skip",
+        "volume",
+        "restart",
+        "remove",
+        "loop",
+        "nowplaying",
+        "uptime",
+    ],
+)
 async def test_all_controlled_commands_deny_unauthorized_users(
     wired_client: tuple[FakeClient, _FakeService, Settings], command: str
 ) -> None:
@@ -382,3 +434,175 @@ async def test_all_controlled_commands_deny_unauthorized_users(
     message = FakeMessage(text=f"/{command}", user_id=999)
     await dispatch(client, message)
     assert "não tem permissão" in message.replies[0]
+
+
+# --- /volume /restart ---
+
+
+async def test_volume_without_arguments_shows_usage(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/volume", user_id=111)
+    await dispatch(client, message)
+    assert service.volume_calls == []
+    assert "Uso:" in message.replies[0]
+
+
+async def test_volume_non_numeric_argument(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/volume alto", user_id=111)
+    await dispatch(client, message)
+    assert service.volume_calls == []
+    assert "inválido" in message.replies[0]
+
+
+async def test_volume_success(wired_client: tuple[FakeClient, _FakeService, Settings]) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/volume 150", user_id=111)
+    await dispatch(client, message)
+    assert service.volume_calls == [150]
+    assert "150" in message.replies[0]
+
+
+async def test_volume_out_of_range_replies_with_reason(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.volume_exception = InvalidVolumeError("Volume deve estar entre 0 e 200.")
+    message = FakeMessage(text="/volume 999", user_id=111)
+    await dispatch(client, message)
+    assert "entre 0 e 200" in message.replies[0]
+
+
+async def test_volume_nothing_playing(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.volume_exception = NothingPlayingError("Nada está tocando no momento.")
+    message = FakeMessage(text="/volume 50", user_id=111)
+    await dispatch(client, message)
+    assert "Nada está tocando" in message.replies[0]
+
+
+async def test_restart_success(wired_client: tuple[FakeClient, _FakeService, Settings]) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/restart", user_id=111)
+    await dispatch(client, message)
+    assert service.restart_called is True
+    assert "reiniciado" in message.replies[0]
+
+
+async def test_restart_nothing_playing(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.restart_exception = NothingPlayingError("Nada está tocando no momento.")
+    message = FakeMessage(text="/restart", user_id=111)
+    await dispatch(client, message)
+    assert "Nada está tocando" in message.replies[0]
+
+
+# --- /remove /loop ---
+
+
+async def test_remove_without_arguments_shows_usage(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/remove", user_id=111)
+    await dispatch(client, message)
+    assert "Uso:" in message.replies[0]
+
+
+async def test_remove_non_numeric_position(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/remove abc", user_id=111)
+    await dispatch(client, message)
+    assert "inválida" in message.replies[0]
+
+
+async def test_remove_success(wired_client: tuple[FakeClient, _FakeService, Settings]) -> None:
+    client, service, _ = wired_client
+    service.remove_result = QueueItem(
+        source=MediaSource(raw="/media/x.mp4", type=SourceType.LOCAL_FILE), requested_by=1
+    )
+    message = FakeMessage(text="/remove 1", user_id=111)
+    await dispatch(client, message)
+    assert "x.mp4" in message.replies[0]
+
+
+async def test_remove_invalid_index_replies_with_reason(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.remove_exception = InvalidQueueIndexError("Posição inválida: 5.")
+    message = FakeMessage(text="/remove 5", user_id=111)
+    await dispatch(client, message)
+    assert "Posição inválida" in message.replies[0]
+
+
+async def test_loop_without_arguments_shows_usage(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/loop", user_id=111)
+    await dispatch(client, message)
+    assert service.loop_calls == []
+    assert "Uso:" in message.replies[0]
+
+
+async def test_loop_invalid_mode(wired_client: tuple[FakeClient, _FakeService, Settings]) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/loop banana", user_id=111)
+    await dispatch(client, message)
+    assert service.loop_calls == []
+    assert "inválido" in message.replies[0]
+
+
+async def test_loop_success(wired_client: tuple[FakeClient, _FakeService, Settings]) -> None:
+    client, service, _ = wired_client
+    message = FakeMessage(text="/loop queue", user_id=111)
+    await dispatch(client, message)
+    assert service.loop_calls == [LoopMode.QUEUE]
+    assert "queue" in message.replies[0]
+
+
+# --- /nowplaying /uptime ---
+
+
+async def test_now_playing_when_idle(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.now_playing_result = None
+    message = FakeMessage(text="/nowplaying", user_id=111)
+    await dispatch(client, message)
+    assert "Nada está tocando" in message.replies[0]
+
+
+async def test_now_playing_when_active(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    item = QueueItem(
+        source=MediaSource(raw="/media/a.mp4", type=SourceType.LOCAL_FILE), requested_by=1
+    )
+    service.now_playing_result = (item, datetime.now(UTC) - timedelta(minutes=2))
+    message = FakeMessage(text="/nowplaying", user_id=111)
+    await dispatch(client, message)
+    assert "a.mp4" in message.replies[0]
+
+
+async def test_uptime_formats_duration(
+    wired_client: tuple[FakeClient, _FakeService, Settings],
+) -> None:
+    client, service, _ = wired_client
+    service.uptime_result = timedelta(hours=1, minutes=30)
+    message = FakeMessage(text="/uptime", user_id=111)
+    await dispatch(client, message)
+    assert "1h" in message.replies[0]

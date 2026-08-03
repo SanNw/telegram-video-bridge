@@ -130,9 +130,15 @@ para usar este comando." `/start`, `/help`, `/ping` e `/version` são públicos
 | `/resume` | whitelist | Retoma uma chamada pausada. |
 | `/stop` | whitelist | Para a reprodução e sai da chamada. Não limpa a fila pendente. |
 | `/skip` | whitelist | Pula para o próximo item (ignora loop de item). Fila vazia: encerra. |
+| `/restart` | whitelist | Reinicia o item atual do zero (mesma fonte). "Nada está tocando" se ociosa. |
+| `/volume <0-200>` | whitelist | Ajusta o volume da chamada. Sem argumento: uso. Fora do intervalo ou não numérico: motivo. |
 | `/queue` | whitelist | Lista o item atual + itens pendentes. |
+| `/remove <posição>` | whitelist | Remove um item pendente da fila. Posição inválida: motivo. |
+| `/loop <off\|item\|queue>` | whitelist | Define o modo de repetição da fila. Modo desconhecido: valores aceitos. |
 | `/clear` | whitelist | Esvazia a fila pendente (não afeta o item em reprodução). |
 | `/status` | whitelist | Estado do streaming, da chamada, da fila e sinal de degradação. |
+| `/nowplaying` | whitelist | Item em reprodução, quem pediu e há quanto tempo toca. "Nada está tocando" se ociosa. |
+| `/uptime` | whitelist | Há quanto tempo o processo está em execução. |
 
 Fontes suportadas em `/play`: arquivo local em `media/` (`.mp4`, `.mkv`,
 `.avi`, `.mov`), URL HTTP/HTTPS direta, HLS (`.m3u8`), RTMP, RTSP.

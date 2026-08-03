@@ -16,8 +16,9 @@ import pytest
 
 import app.services.playback_service as service_module
 from app.config.settings import Settings
+from app.player.exceptions import InvalidQueueIndexError
 from app.player.models import LoopMode, PlaybackState, QueueItem
-from app.services.exceptions import NothingPlayingError
+from app.services.exceptions import InvalidVolumeError, NothingPlayingError
 from app.services.playback_service import PlaybackService
 from app.streaming.models import FFmpegProcessState, HealthStatus
 from app.telegram.models import CallHealth, CallState
@@ -51,6 +52,15 @@ class _FakeQueueManager:
     async def clear(self) -> None:
         self.items = []
 
+    async def remove(self, position: int) -> QueueItem:
+        index = position - 1
+        if index < 0 or index >= len(self.items):
+            raise InvalidQueueIndexError(f"Posição inválida: {position}.")
+        return self.items.pop(index)
+
+    async def set_loop_mode(self, mode: LoopMode) -> None:
+        self.loop_mode = mode
+
     def snapshot(self) -> PlaybackState:
         return PlaybackState(items=list(self.items), current=self.current, loop_mode=self.loop_mode)
 
@@ -61,6 +71,7 @@ class _FakeStreamer:
         self.audio_pipe_path = Path("/fake/audio.pipe")
         self.started_sources: list[MediaSource] = []
         self.stopped = False
+        self.restart_count = 0
         self.state = FFmpegProcessState.IDLE
         self._on_completion: Callable[[], object] | None = None
         self._on_permanent_failure: Callable[[], object] | None = None
@@ -79,6 +90,9 @@ class _FakeStreamer:
     async def stop(self) -> None:
         self.stopped = True
         self.state = FFmpegProcessState.STOPPED
+
+    async def restart(self) -> None:
+        self.restart_count += 1
 
     def healthcheck(self) -> HealthStatus:
         return HealthStatus(
@@ -99,6 +113,7 @@ class _FakeCallManager:
         self.joined: list[tuple[Path, Path]] = []
         self.paused = False
         self.left = False
+        self.volume: int | None = None
         self.client = MagicMock()
         self._on_permanent_failure: Callable[[], object] | None = None
 
@@ -123,6 +138,9 @@ class _FakeCallManager:
 
     async def leave_call(self) -> None:
         self.left = True
+
+    async def change_volume(self, volume: int) -> None:
+        self.volume = volume
 
     def healthcheck(self) -> CallHealth:
         return CallHealth(state=CallState.CONNECTED, chat_id=1, reconnect_count=0, last_error=None)
@@ -405,3 +423,109 @@ async def test_shutdown_stops_active_playback(
     _, streamer, call = _fakes(service)
     assert streamer.stopped is True
     assert call.left is True
+
+
+async def _play_one(service: PlaybackService, tmp_path: Path, name: str = "a.mp4") -> None:
+    media_dir = tmp_path / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / name).write_bytes(b"x")
+    await service.play(name, requested_by=1)
+
+
+async def test_remove_from_queue_delegates_to_queue_manager(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    await _play_one(service, tmp_path, "a.mp4")  # vira current
+    await _play_one(service, tmp_path, "b.mp4")  # pendente, posição 1
+
+    removed = await service.remove_from_queue(1)
+
+    assert removed.source.raw.endswith("b.mp4")
+    queue, _, _ = _fakes(service)
+    assert queue.items == []
+
+
+async def test_set_loop_mode_delegates_to_queue_manager(
+    make_service: Callable[..., PlaybackService],
+) -> None:
+    service = make_service()
+    await service.set_loop_mode(LoopMode.QUEUE)
+    queue, _, _ = _fakes(service)
+    assert queue.loop_mode is LoopMode.QUEUE
+
+
+async def test_set_volume_raises_when_nothing_playing(
+    make_service: Callable[..., PlaybackService],
+) -> None:
+    service = make_service()
+    with pytest.raises(NothingPlayingError):
+        await service.set_volume(100)
+
+
+@pytest.mark.parametrize("volume", [-1, 201])
+async def test_set_volume_raises_when_out_of_range(
+    make_service: Callable[..., PlaybackService], tmp_path: Path, volume: int
+) -> None:
+    service = make_service()
+    await _play_one(service, tmp_path)
+    with pytest.raises(InvalidVolumeError):
+        await service.set_volume(volume)
+
+
+async def test_set_volume_success(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    await _play_one(service, tmp_path)
+    await service.set_volume(150)
+    _, _, call = _fakes(service)
+    assert call.volume == 150
+
+
+async def test_restart_current_raises_when_nothing_playing(
+    make_service: Callable[..., PlaybackService],
+) -> None:
+    service = make_service()
+    with pytest.raises(NothingPlayingError):
+        await service.restart_current()
+
+
+async def test_restart_current_calls_streamer_restart(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    await _play_one(service, tmp_path)
+    await service.restart_current()
+    _, streamer, _ = _fakes(service)
+    assert streamer.restart_count == 1
+
+
+async def test_now_playing_none_when_idle(make_service: Callable[..., PlaybackService]) -> None:
+    service = make_service()
+    assert service.now_playing() is None
+
+
+async def test_now_playing_returns_current_item_and_start_time(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    await _play_one(service, tmp_path)
+    result = service.now_playing()
+    assert result is not None
+    item, started_at = result
+    assert item.source.raw.endswith("a.mp4")
+    assert started_at is not None
+
+
+async def test_uptime_is_zero_before_start(make_service: Callable[..., PlaybackService]) -> None:
+    service = make_service()
+    assert service.uptime().total_seconds() == 0
+
+
+async def test_uptime_increases_after_start(
+    make_service: Callable[..., PlaybackService],
+) -> None:
+    service = make_service()
+    await service.start()
+    assert service.uptime().total_seconds() >= 0

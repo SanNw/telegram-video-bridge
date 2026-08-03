@@ -16,13 +16,14 @@ saber qual é o próximo da fila) e uma falha permanente de qualquer uma das dua
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 from pyrogram import Client
 
 from app.config.settings import Settings
-from app.player.models import PlaybackState, QueueItem
+from app.player.models import LoopMode, PlaybackState, QueueItem
 from app.player.queue_manager import QueueManager
-from app.services.exceptions import NothingPlayingError
+from app.services.exceptions import InvalidVolumeError, NothingPlayingError
 from app.services.models import ServiceStatus
 from app.streaming.ffmpeg_streamer import FFmpegStreamer
 from app.telegram.call_manager import TelegramCallManager
@@ -45,6 +46,8 @@ class PlaybackService:
         self._is_active = False
         self._degraded = False
         self._degraded_reason: str | None = None
+        self._started_at: datetime | None = None
+        self._current_started_at: datetime | None = None
 
         self._streamer.set_completion_callback(self._handle_item_completed)
         self._streamer.set_permanent_failure_callback(self._handle_streamer_permanent_failure)
@@ -57,6 +60,7 @@ class PlaybackService:
 
     async def start(self) -> None:
         """Carrega a fila persistida e conecta o cliente Telegram. Não retoma reprodução."""
+        self._started_at = datetime.now(UTC)
         await self._queue.load()
         await self._call_manager.start()
         _logger.info("PlaybackService iniciado.")
@@ -121,6 +125,49 @@ class PlaybackService:
         """Esvazia os itens pendentes da fila (não afeta o item em reprodução)."""
         await self._queue.clear()
 
+    async def remove_from_queue(self, position: int) -> QueueItem:
+        """Remove o item na posição `position` (1-indexada) da fila pendente.
+
+        Levanta `InvalidQueueIndexError` (tratada por `bot/`) se a posição não existir.
+        """
+        return await self._queue.remove(position)
+
+    async def set_loop_mode(self, mode: LoopMode) -> None:
+        """Define o modo de loop da fila (`off`, `item` ou `queue`)."""
+        await self._queue.set_loop_mode(mode)
+
+    async def set_volume(self, volume: int) -> None:
+        """Ajusta o volume da chamada (0-200).
+
+        Levanta `NothingPlayingError` se nada estiver tocando, `InvalidVolumeError`
+        se `volume` estiver fora do intervalo permitido.
+        """
+        if not self._is_active:
+            raise NothingPlayingError("Nada está tocando no momento.")
+        if not 0 <= volume <= 200:
+            raise InvalidVolumeError("Volume deve estar entre 0 e 200.")
+        await self._call_manager.change_volume(volume)
+
+    async def restart_current(self) -> None:
+        """Reinicia o item atual do zero (mesma fonte). `NothingPlayingError` se ocioso."""
+        if not self._is_active:
+            raise NothingPlayingError("Nada está tocando no momento.")
+        await self._streamer.restart()
+        self._current_started_at = datetime.now(UTC)
+
+    def now_playing(self) -> tuple[QueueItem, datetime] | None:
+        """Item em reprodução + horário de início, para `/nowplaying`. `None` se ocioso."""
+        current = self._queue.snapshot().current
+        if current is None or self._current_started_at is None:
+            return None
+        return current, self._current_started_at
+
+    def uptime(self) -> timedelta:
+        """Há quanto tempo o processo está em execução, para `/uptime`."""
+        if self._started_at is None:
+            return timedelta(0)
+        return datetime.now(UTC) - self._started_at
+
     def queue_snapshot(self) -> PlaybackState:
         """Estado completo da fila, para formatar `/queue`."""
         return self._queue.snapshot()
@@ -145,11 +192,13 @@ class PlaybackService:
         self._is_active = True
         self._degraded = False
         self._degraded_reason = None
+        self._current_started_at = datetime.now(UTC)
 
     async def _stop_active_locked(self) -> None:
         await self._streamer.stop()
         await self._call_manager.leave_call()
         self._is_active = False
+        self._current_started_at = None
 
     async def _handle_item_completed(self) -> None:
         async with self._lock:
