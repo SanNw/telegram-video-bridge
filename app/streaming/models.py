@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class FFmpegProcessState(str, Enum):
+class FFmpegProcessState(StrEnum):
     """Estado do processo FFmpeg gerenciado por `FFmpegStreamer`."""
 
     IDLE = "idle"

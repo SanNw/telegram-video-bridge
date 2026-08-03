@@ -114,7 +114,14 @@ class FFmpegStreamer:
 
     @staticmethod
     def _input_flags(source: MediaSource) -> list[str]:
-        reconnect_flags = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+        reconnect_flags = [
+            "-reconnect",
+            "1",
+            "-reconnect_streamed",
+            "1",
+            "-reconnect_delay_max",
+            "5",
+        ]
         if source.type is SourceType.LOCAL_FILE:
             return ["-re"]
         if source.type is SourceType.HTTP:
@@ -133,8 +140,13 @@ class FFmpegStreamer:
             await self._start_locked(source)
 
     async def _start_locked(self, source: MediaSource) -> None:
-        if not shutil.which(self._settings.ffmpeg_path) and not Path(self._settings.ffmpeg_path).is_file():
-            raise FFmpegStreamerError(f"Binário FFmpeg não encontrado: {self._settings.ffmpeg_path!r}")
+        if (
+            not shutil.which(self._settings.ffmpeg_path)
+            and not Path(self._settings.ffmpeg_path).is_file()
+        ):
+            raise FFmpegStreamerError(
+                f"Binário FFmpeg não encontrado: {self._settings.ffmpeg_path!r}"
+            )
 
         self._ensure_pipes()
         self._state = FFmpegProcessState.STARTING

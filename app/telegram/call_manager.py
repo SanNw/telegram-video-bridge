@@ -22,6 +22,7 @@ o operador via `services/`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -85,11 +86,12 @@ class TelegramCallManager:
         self._on_permanent_failure = callback
 
     def _register_handlers(self) -> None:
-        @self._call_py.on_update(pytgcalls_filters.chat_update(ChatUpdate.Status.LEFT_CALL))
+        # py-tgcalls não publica type stubs; o decorator resolve como Any em modo estrito.
+        @self._call_py.on_update(pytgcalls_filters.chat_update(ChatUpdate.Status.LEFT_CALL))  # type: ignore[untyped-decorator]
         async def _handle_left(_: PyTgCalls, update: Update) -> None:
             await self._on_disconnected(update)
 
-        @self._call_py.on_update(pytgcalls_filters.stream_end())
+        @self._call_py.on_update(pytgcalls_filters.stream_end())  # type: ignore[untyped-decorator]
         async def _handle_stream_end(_: PyTgCalls, update: Update) -> None:
             stream_type = update.stream_type if isinstance(update, StreamEnded) else None
             _logger.warning("Stream do PyTgCalls encerrado ({type}).", type=stream_type)
@@ -127,8 +129,12 @@ class TelegramCallManager:
     async def _play(self, video_pipe: Path, audio_pipe: Path) -> None:
         async with self._lock:
             stream = MediaStream(
-                media_path=InputDevice("telegram-video-bridge-video", str(video_pipe), is_video=True),
-                audio_path=InputDevice("telegram-video-bridge-audio", str(audio_pipe), is_video=False),
+                media_path=InputDevice(
+                    "telegram-video-bridge-video", str(video_pipe), is_video=True
+                ),
+                audio_path=InputDevice(
+                    "telegram-video-bridge-audio", str(audio_pipe), is_video=False
+                ),
                 audio_parameters=_AUDIO_PARAMETERS,
                 video_parameters=_VIDEO_PARAMETERS,
             )
@@ -137,31 +143,27 @@ class TelegramCallManager:
 
     async def pause_call(self) -> None:
         """Pausa a chamada (mantém a conexão; o FFmpeg segue rodando, bloqueado no pipe)."""
-        try:
+        with contextlib.suppress(NotInCallError):
             await self._call_py.pause(self._chat_id)
-        except NotInCallError:
-            pass
 
     async def resume_call(self) -> None:
         """Retoma uma chamada pausada."""
-        try:
+        with contextlib.suppress(NotInCallError):
             await self._call_py.resume(self._chat_id)
-        except NotInCallError:
-            pass
 
     async def leave_call(self) -> None:
         """Sai da chamada. Idempotente: não levanta erro se já não estiver em uma chamada."""
         async with self._lock:
-            try:
+            with contextlib.suppress(NotInCallError, NoActiveGroupCall):
                 await self._call_py.leave_call(self._chat_id)
-            except (NotInCallError, NoActiveGroupCall):
-                pass
             self._state = CallState.DISCONNECTED
 
     async def _on_disconnected(self, _update: Update) -> None:
         if self._state == CallState.RECONNECTING:
             return  # reconexão já em andamento; evita disparos concorrentes
-        _logger.warning("Chamada desconectada (chat {chat_id}); iniciando reconexão.", chat_id=self._chat_id)
+        _logger.warning(
+            "Chamada desconectada (chat {chat_id}); iniciando reconexão.", chat_id=self._chat_id
+        )
         self._state = CallState.RECONNECTING
         await self.reconnect()
 

@@ -35,13 +35,13 @@ class RetryPolicy:
 
     def delay_for_attempt(self, attempt: int) -> float:
         """Delay em segundos antes da tentativa `attempt` (1-indexada), incluindo jitter."""
-        exponential = self.base_delay_seconds * (2 ** (attempt - 1))
+        exponential: float = self.base_delay_seconds * (2 ** (attempt - 1))
         capped = min(exponential, self.max_delay_seconds)
         jitter = random.uniform(0, self.jitter_seconds)
         return capped + jitter
 
 
-async def retry_with_backoff(
+async def retry_with_backoff[T](
     operation: Callable[[], Awaitable[T]],
     policy: RetryPolicy,
     *,
@@ -72,4 +72,6 @@ async def retry_with_backoff(
             )
             await asyncio.sleep(delay)
 
-    raise RetryExhaustedError(f"Todas as {policy.max_attempts} tentativas falharam.") from last_error
+    raise RetryExhaustedError(
+        f"Todas as {policy.max_attempts} tentativas falharam."
+    ) from last_error

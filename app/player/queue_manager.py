@@ -108,7 +108,9 @@ class QueueManager:
 
     def snapshot(self) -> PlaybackState:
         """Estado atual, consultável por `services/` para formatar `/queue` e `/status`."""
-        return PlaybackState(items=list(self._items), current=self._current, loop_mode=self._loop_mode)
+        return PlaybackState(
+            items=list(self._items), current=self._current, loop_mode=self._loop_mode
+        )
 
     async def _save(self) -> None:
         await self._persistence.save(self.snapshot())

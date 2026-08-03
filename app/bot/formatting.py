@@ -32,5 +32,7 @@ def format_queue(state: PlaybackState) -> str:
         lines.append(f"▶️ Tocando agora: `{state.current.source.raw}`")
     if state.items:
         lines.append("\nPróximos:")
-        lines.extend(f"{position}. `{item.source.raw}`" for position, item in enumerate(state.items, start=1))
+        lines.extend(
+            f"{position}. `{item.source.raw}`" for position, item in enumerate(state.items, start=1)
+        )
     return "\n".join(lines)

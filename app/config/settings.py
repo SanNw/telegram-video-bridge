@@ -91,4 +91,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Retorna a instância cacheada de `Settings` (singleton por processo)."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

@@ -8,12 +8,12 @@ e restringe caminhos locais ao diretório de mídia configurado.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
 
-class SourceType(str, Enum):
+class SourceType(StrEnum):
     """Classificação da fonte de mídia, usada por `FFmpegStreamer.build_command`."""
 
     LOCAL_FILE = "local_file"

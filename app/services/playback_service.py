@@ -139,7 +139,9 @@ class PlaybackService:
 
     async def _start_or_switch_locked(self, item: QueueItem) -> None:
         await self._streamer.change_source(item.source)
-        await self._call_manager.send_media(self._streamer.video_pipe_path, self._streamer.audio_pipe_path)
+        await self._call_manager.send_media(
+            self._streamer.video_pipe_path, self._streamer.audio_pipe_path
+        )
         self._is_active = True
         self._degraded = False
         self._degraded_reason = None

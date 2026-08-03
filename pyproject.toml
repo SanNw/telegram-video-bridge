@@ -41,7 +41,8 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "C4", "SIM"]
-ignore = ["E501"]
+# ASYNC240: projeto usa asyncio puro (não trio/anyio), a sugestão da regra não se aplica.
+ignore = ["E501", "ASYNC240"]
 
 [tool.black]
 line-length = 100
@@ -55,8 +56,9 @@ disallow_untyped_defs = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["pyrogram.*", "pytgcalls.*", "ntgcalls.*"]
+module = ["pyrogram", "pyrogram.*", "pytgcalls", "pytgcalls.*", "ntgcalls", "ntgcalls.*"]
 ignore_missing_imports = true
+implicit_reexport = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

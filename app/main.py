@@ -8,6 +8,7 @@ logada em `errors.log` (nunca derruba o processo) via `loop.set_exception_handle
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 import sys
 from typing import Any
@@ -44,10 +45,9 @@ async def _run() -> None:
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        # Plataforma sem suporte a add_signal_handler (ex.: Windows); Ctrl+C ainda funciona.
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass  # Plataforma sem suporte a add_signal_handler (ex.: Windows); Ctrl+C ainda funciona.
 
     try:
         await stop_event.wait()

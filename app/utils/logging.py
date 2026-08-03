@@ -47,7 +47,7 @@ def setup_logging(settings: Settings) -> None:
         if value
     }
 
-    def _redact_patcher(record: "Record") -> None:
+    def _redact_patcher(record: Record) -> None:
         message = record["message"]
         for secret in secrets:
             if secret in message:
@@ -64,8 +64,8 @@ def setup_logging(settings: Settings) -> None:
         format=_CONSOLE_FORMAT,
     )
 
-    def _component_is(*components: str) -> "type":
-        def _filter(record: "Record") -> bool:
+    def _component_is(*components: str) -> type:
+        def _filter(record: Record) -> bool:
             return record["extra"].get("component") in components
 
         return _filter  # type: ignore[return-value]
@@ -109,7 +109,7 @@ def setup_logging(settings: Settings) -> None:
     _configured = True
 
 
-def get_logger(component: str) -> "logger.__class__":  # type: ignore[name-defined]
+def get_logger(component: str) -> logger.__class__:  # type: ignore[name-defined]
     """Retorna um logger vinculado a `component`, roteado para o sink correspondente."""
     return logger.bind(component=component)
 

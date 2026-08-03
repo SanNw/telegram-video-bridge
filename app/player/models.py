@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from app.utils.sanitize import MediaSource, SourceType
 
 
-class LoopMode(str, Enum):
+class LoopMode(StrEnum):
     """Modo de repetição da fila."""
 
     OFF = "off"
