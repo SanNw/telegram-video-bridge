@@ -103,7 +103,8 @@ async def test_loop_item_replays_same_item_on_advance(
     first = await manager.advance()
     second = await manager.advance()
 
-    assert first is second is not None
+    assert first is not None
+    assert first is second
     assert first.source.raw.endswith("a.mp4")
 
 

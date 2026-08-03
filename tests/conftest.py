@@ -28,6 +28,7 @@ def make_settings(tmp_path: Path) -> Callable[..., Settings]:
             "media_path": media_path,
             "queue_data_path": tmp_path / "data" / "queue.json",
             "ffmpeg_path": "ffmpeg",
+            "ffmpeg_terminate_timeout_seconds": 0.2,
             "queue_max_items": 5,
             "retry_base_delay_seconds": 0.01,
             "retry_max_delay_seconds": 0.02,

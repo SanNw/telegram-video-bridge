@@ -319,3 +319,72 @@ def _make_setter(event: asyncio.Event) -> Callable[[], asyncio.Future[None]]:
         event.set()
 
     return _setter
+
+
+async def test_stop_kills_process_if_it_ignores_sigterm(
+    make_settings: Callable[..., Settings], make_fake_ffmpeg: Callable[[str], Path]
+) -> None:
+    fake_ffmpeg = make_fake_ffmpeg("trap '' TERM; while true; do sleep 0.05; done")
+    settings = make_settings(ffmpeg_path=str(fake_ffmpeg), ffmpeg_terminate_timeout_seconds=0.1)
+    streamer = FFmpegStreamer(settings)
+
+    await streamer.start(_LOCAL_SOURCE)
+    await streamer.stop()  # deve recorrer a SIGKILL após o timeout, não travar o teste
+
+    assert streamer.healthcheck().state is FFmpegProcessState.STOPPED
+    assert streamer.healthcheck().pid is None
+
+
+async def test_launch_oserror_during_retry_triggers_permanent_failure(
+    make_settings: Callable[..., Settings], make_fake_ffmpeg: Callable[[str], Path]
+) -> None:
+    # Primeira execução falha e remove a própria permissão de execução antes de
+    # sair — a tentativa de reinício automático não consegue nem spawnar o
+    # processo (PermissionError/OSError), o que deve ser tratado como falha
+    # permanente imediata, sem entrar em loop.
+    fake_ffmpeg = make_fake_ffmpeg('chmod 000 "$0"; exit 1')
+    settings = make_settings(
+        ffmpeg_path=str(fake_ffmpeg),
+        retry_base_delay_seconds=0.001,
+        retry_max_delay_seconds=0.001,
+        retry_max_attempts=5,
+        retry_jitter_seconds=0.0,
+    )
+    streamer = FFmpegStreamer(settings)
+    permanent_failure = asyncio.Event()
+    streamer.set_permanent_failure_callback(_make_setter(permanent_failure))
+
+    await streamer.start(_LOCAL_SOURCE)
+    await asyncio.wait_for(permanent_failure.wait(), timeout=2.0)
+
+    assert streamer.healthcheck().state is FFmpegProcessState.FAILED
+    assert streamer.healthcheck().last_error is not None
+
+
+async def test_pump_stream_logs_ffmpeg_output(
+    make_settings: Callable[..., Settings], make_fake_ffmpeg: Callable[[str], Path]
+) -> None:
+    from app.utils.logging import reset_logging_state, setup_logging
+
+    fake_ffmpeg = make_fake_ffmpeg(
+        "echo 'linha-stdout-marcador'; echo 'linha-stderr-marcador' >&2; "
+        "trap 'exit 0' TERM; while true; do sleep 0.05; done"
+    )
+    settings = make_settings(ffmpeg_path=str(fake_ffmpeg))
+    reset_logging_state()
+    setup_logging(settings)
+    try:
+        streamer = FFmpegStreamer(settings)
+        await streamer.start(_LOCAL_SOURCE)
+        try:
+            await _wait_until(
+                lambda: (settings.log_dir / "ffmpeg.log").exists()
+                and "linha-stderr-marcador" in (settings.log_dir / "ffmpeg.log").read_text()
+            )
+        finally:
+            await streamer.stop()
+        content = (settings.log_dir / "ffmpeg.log").read_text()
+        assert "linha-stdout-marcador" in content
+        assert "linha-stderr-marcador" in content
+    finally:
+        reset_logging_state()

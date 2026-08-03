@@ -52,6 +52,9 @@ class Settings(BaseSettings):
         default=1, gt=0, description="Máximo de processos FFmpeg simultâneos."
     )
     ffmpeg_healthcheck_interval_seconds: float = Field(default=5.0, gt=0)
+    ffmpeg_terminate_timeout_seconds: float = Field(
+        default=5.0, gt=0, description="Prazo para saída graciosa (SIGTERM) antes de SIGKILL."
+    )
 
     # --- Fila (player) ---
     queue_max_items: int = Field(default=50, gt=0, description="Limite máximo de itens na fila.")

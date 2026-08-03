@@ -234,7 +234,9 @@ class FFmpegStreamer:
         if self._process is not None and self._process.returncode is None:
             self._process.terminate()
             try:
-                await asyncio.wait_for(self._process.wait(), timeout=5)
+                await asyncio.wait_for(
+                    self._process.wait(), timeout=self._settings.ffmpeg_terminate_timeout_seconds
+                )
             except TimeoutError:
                 self._process.kill()
                 await self._process.wait()
