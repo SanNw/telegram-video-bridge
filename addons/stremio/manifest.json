@@ -1,0 +1,7 @@
+{
+  "name": "stremio",
+  "version": "1.0.0",
+  "description": "Consome addons Stremio externos configurados pelo operador (protocolo HTTP/JSON).",
+  "entrypoint": "plugin:Addon",
+  "min_core_version": "0.1.0"
+}

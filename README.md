@@ -260,6 +260,18 @@ um filtro de curadoria dos próprios metadados do archive.org, não uma
 garantia legal absoluta (itens mal categorizados podem escapar do filtro).
 Detalhes em `addons/archive_org/README.md`.
 
+### Addon oficial: `stremio`
+
+Ponte para addons Stremio externos de terceiros (protocolo HTTP/JSON:
+`/manifest.json`, `/catalog`, `/stream`, `/meta`), consumidos via
+`StremioAddonClient` (`app/services/stremio_client.py`). Não baixa nem
+executa código de terceiros — só fala HTTP com URLs que o operador já
+configurou em `config/addons/stremio.json`. Sem upstreams configurados, o
+addon fica inerte (`/find` não retorna nada dele, `health()` não saudável).
+Só resolve streams com URL HTTP(S)/HLS/RTMP/RTSP direta — magnet
+links/torrents não são suportados. Detalhes e exemplo de configuração em
+`addons/stremio/README.md`.
+
 ### O que **não** existe (de propósito)
 
 Não há "loja de addons" (`/addon store`, `/addon install <nome>` baixando de
