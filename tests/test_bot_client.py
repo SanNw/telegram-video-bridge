@@ -27,8 +27,11 @@ def test_build_bot_registers_all_command_groups(make_settings: Callable[..., Set
     fake_service = MagicMock()
     fake_service.client = fake_client
     fake_addon_service = MagicMock()
+    fake_tmdb_service = MagicMock()
 
-    returned = build_bot(fake_service, fake_addon_service, settings)  # type: ignore[arg-type]
+    returned = build_bot(  # type: ignore[arg-type]
+        fake_service, fake_addon_service, settings, fake_tmdb_service
+    )
 
     assert returned is fake_client
     # 4 públicos (start/help/ping/version)
@@ -48,7 +51,8 @@ def test_build_bot_uses_service_client_not_a_new_session(
     fake_service = MagicMock()
     fake_service.client = fake_client
     fake_addon_service = MagicMock()
+    fake_tmdb_service = MagicMock()
 
-    build_bot(fake_service, fake_addon_service, settings)  # type: ignore[arg-type]
+    build_bot(fake_service, fake_addon_service, settings, fake_tmdb_service)  # type: ignore[arg-type]
 
     assert fake_client.on_message.called

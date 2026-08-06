@@ -1,0 +1,18 @@
+{
+  "catalogs": [
+    {
+      "name": "cinemeta",
+      "base_url": "https://v3-cinemeta.strem.io",
+      "catalogs": [
+        { "type": "movie", "id": "top" },
+        { "type": "series", "id": "top" }
+      ]
+    }
+  ],
+  "streams": [
+    {
+      "name": "torrentio",
+      "base_url": "https://torrentio.strem.fun/qualityfilter=4k,cam|sizefilter=4gb"
+    }
+  ]
+}

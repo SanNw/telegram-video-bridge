@@ -21,3 +21,20 @@ class InvalidSearchIndexError(ServiceError):
 
 class NoStreamsAvailableError(ServiceError):
     """O addon não devolveu nenhuma fonte reproduzível para o resultado escolhido."""
+
+
+class TorrentTimeoutError(ServiceError):
+    """Timeout aguardando metadata ou buffer mínimo de um torrent (`TorrentService.resolve`).
+
+    Recuperável: `AddonService.pick()` trata como sinal para tentar o
+    próximo candidato da lista, não como falha definitiva.
+    """
+
+
+class TorrentResolutionError(ServiceError):
+    """Falha não recuperável ao resolver um torrent.
+
+    Cobre: autenticação, indisponibilidade da API do qBittorrent, magnet
+    inválido, nenhum arquivo de vídeo encontrado, ou espaço em disco
+    insuficiente.
+    """

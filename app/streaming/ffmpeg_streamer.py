@@ -72,6 +72,7 @@ class FFmpegStreamer:
         self._pump_tasks: list[asyncio.Task[None]] = []
         self._on_permanent_failure: Callable[[], Awaitable[None]] | None = None
         self._on_completion: Callable[[], Awaitable[None]] | None = None
+        self._on_source_released: Callable[[MediaSource], Awaitable[None]] | None = None
 
     def set_permanent_failure_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Registra callback chamado quando o auto-restart esgota as tentativas (alerta)."""
@@ -80,6 +81,17 @@ class FFmpegStreamer:
     def set_completion_callback(self, callback: Callable[[], Awaitable[None]]) -> None:
         """Registra callback chamado quando a fonte termina normalmente (EOF, código 0)."""
         self._on_completion = callback
+
+    def set_source_released_callback(
+        self, callback: Callable[[MediaSource], Awaitable[None]]
+    ) -> None:
+        """Registra callback chamado quando uma fonte deixa de ser a atual.
+
+        Disparado em `_stop_locked()` (cobre item concluído avançando, skip,
+        stop, shutdown e troca de fonte) — usado por `TorrentService.release`
+        para decidir se remove o torrent do qBittorrent ou o mantém em seed.
+        """
+        self._on_source_released = callback
 
     def build_command(self, source: MediaSource) -> list[str]:
         """Monta o argv do FFmpeg para `source`. Função pura, sem efeitos colaterais."""
@@ -158,7 +170,11 @@ class FFmpegStreamer:
         if source is None:
             raise FFmpegStreamerError("Nenhuma fonte ativa para reiniciar.")
         async with self._lock:
-            await self._stop_locked()
+            # notify_release=False: a fonte não está sendo trocada, só
+            # reiniciada — disparar o callback aqui removeria um torrent com
+            # REMOVE_TORRENT_AFTER_PLAY=True bem no meio do restart, quebrando
+            # a tentativa seguinte, que lê exatamente o mesmo arquivo.
+            await self._stop_locked(notify_release=False)
             self._restart_count += 1
             await self._launch(source)
         self._spawn_supervisor(source)
@@ -222,7 +238,13 @@ class FFmpegStreamer:
             self._supervisor_task.cancel()
         self._supervisor_task = asyncio.create_task(self._supervise(source))
 
-    async def _stop_locked(self) -> None:
+    async def _stop_locked(self, *, notify_release: bool = True) -> None:
+        if (
+            notify_release
+            and self._current_source is not None
+            and self._on_source_released is not None
+        ):
+            await self._on_source_released(self._current_source)
         self._stopping_intentionally = True
         if self._supervisor_task is not None:
             self._supervisor_task.cancel()

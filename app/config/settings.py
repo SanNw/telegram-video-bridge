@@ -45,6 +45,14 @@ class Settings(BaseSettings):
             "ou 'all' para qualquer membro do grupo em CHAT_ID."
         ),
     )
+    # Ações de gerenciamento de addons (enable/disable/reload/uninstall) executam
+    # código de terceiros no mesmo processo que tem a SESSION_STRING — não devem
+    # ficar sob AUTHORIZED_USER_IDS=all (qualquer membro do grupo). Restritas a
+    # este único user_id; None nega a todos (fail-safe). Ver app/bot/auth.py.
+    owner_user_id: int | None = Field(
+        default=None,
+        description="user_id do Telegram autorizado a gerenciar addons (enable/disable/reload/uninstall).",
+    )
 
     # --- Logging ---
     log_level: Literal["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -100,6 +108,57 @@ class Settings(BaseSettings):
         default=300.0, gt=0, description="TTL do cache de resultados de busca de addons."
     )
 
+    # --- TMDB (metadados de filmes) ---
+    # `None` desativa a integração por completo (nenhuma chamada é feita, /find
+    # segue funcionando só com o que os addons já devolvem). Obtenha uma chave
+    # em https://www.themoviedb.org/settings/api.
+    tmdb_api_key: SecretStr | None = Field(
+        default=None, description="Chave da API TMDB (v3, bearer token). Vazio desativa a integração."
+    )
+    tmdb_language: str = Field(
+        default="pt-BR", description="Idioma (ISO 639-1/BCP 47) dos metadados retornados pelo TMDB."
+    )
+    tmdb_request_timeout_seconds: float = Field(
+        default=10.0, gt=0, description="Timeout de rede por requisição ao TMDB."
+    )
+
+    # --- qBittorrent / Torrents ---
+    # Suporte a streams que só trazem infoHash/magnet (ex.: Torrentio sem um
+    # serviço de debrid configurado) — resolvidos via a Web API do qBittorrent
+    # em vez de descartados. Ver app/services/torrent_service.py.
+    qbittorrent_host: str = Field(
+        default="localhost", description="Host da Web API do qBittorrent."
+    )
+    qbittorrent_port: int = Field(default=8080, gt=0, description="Porta da Web API do qBittorrent.")
+    qbittorrent_username: str = Field(default="admin", description="Usuário da Web API do qBittorrent.")
+    qbittorrent_password: SecretStr = Field(
+        default=SecretStr(""), description="Senha da Web API do qBittorrent."
+    )
+    qbittorrent_category: str | None = Field(
+        default=None, description="Categoria aplicada aos torrents adicionados pelo bot, se definida."
+    )
+    # IMPORTANTE: precisa ser um caminho acessível localmente pelo processo do
+    # bridge (mesma máquina ou volume compartilhado) — a Web API do qBittorrent
+    # não expõe leitura de bytes, só metadados/controle; o FFmpeg lê o arquivo
+    # direto do disco enquanto ele ainda está sendo baixado. Recomendado manter
+    # dentro de `media_path` (mesmo diretório que `resolve_source` já confia).
+    qbittorrent_save_path: Path = Field(
+        default=Path("media/torrents"),
+        description="Diretório de download dos torrents, acessível localmente pelo bridge.",
+    )
+    torrent_buffer_mb: float = Field(
+        default=50.0, gt=0, description="Buffer mínimo (MB) baixado do arquivo antes de liberar ao FFmpeg."
+    )
+    torrent_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description="Prazo para metadata chegar ou o buffer mínimo ser atingido antes de desistir do candidato.",
+    )
+    remove_torrent_after_play: bool = Field(
+        default=False,
+        description="Remove o torrent do qBittorrent ao fim da reprodução (mantém em seed se False).",
+    )
+
     @field_validator("authorized_user_ids", mode="before")
     @classmethod
     def _split_authorized_user_ids(cls, value: object) -> object:
@@ -128,6 +187,9 @@ class Settings(BaseSettings):
         data = self.model_dump(mode="json")
         data["api_hash"] = "***MASKED***"
         data["session_string"] = "***MASKED***"
+        if self.tmdb_api_key is not None:
+            data["tmdb_api_key"] = "***MASKED***"
+        data["qbittorrent_password"] = "***MASKED***"
         return data
 
 

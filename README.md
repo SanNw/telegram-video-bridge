@@ -150,11 +150,15 @@ para usar este comando." `/start`, `/help`, `/ping` e `/version` são públicos
 | `/find <busca>` | whitelist | Busca em todos os addons habilitados; lista resultados numerados. Sem argumento: uso. |
 | `/pick <número>` | whitelist | Resolve o resultado `<número>` da última `/find` e enfileira. Posição inválida, sem fonte reproduzível, fonte inválida ou fila cheia: motivo. |
 | `/addons` | whitelist | Lista addons instalados (habilitado/desabilitado, versão). |
-| `/addon <info\|enable\|disable\|reload\|uninstall> <nome>` | whitelist | Gerencia um addon (ver "Sistema de addons"). Ação/nome ausente ou addon inexistente: motivo. |
+| `/addon info <nome>` | whitelist | Versão, descrição, estado e healthcheck do addon. Nome ausente ou addon inexistente: motivo. |
+| `/addon <enable\|disable\|reload\|uninstall> <nome>` | `OWNER_USER_ID` | Gerencia um addon (ver "Sistema de addons"). Restrito ao operador mesmo com `AUTHORIZED_USER_IDS=all` — quem não é owner recebe recusa. Nome ausente ou addon inexistente: motivo. |
 
 Fontes suportadas em `/play` (e no destino final de `/pick`): arquivo local
-em `media/` (`.mp4`, `.mkv`, `.avi`, `.mov`), URL HTTP/HTTPS direta, HLS
-(`.m3u8`), RTMP, RTSP.
+em `media/` (`.mp4`, `.mkv`, `.avi`, `.mov`, `.ts`, `.m2ts`), URL HTTP/HTTPS
+direta, HLS (`.m3u8`), RTMP, RTSP. Candidatos de addon que só trazem um
+torrent (`infoHash`/magnet, sem URL HTTP) são resolvidos via qBittorrent
+antes de chegar em `/play` — ver
+[Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent).
 
 ## Como adicionar vídeos
 
@@ -235,15 +239,23 @@ própria, para não duplicar o mecanismo de `Settings`.
 ### Gerenciando addons
 
 - `/addons` — lista os instalados, com estado (habilitado/desabilitado).
+  Whitelist normal (`AUTHORIZED_USER_IDS`).
 - `/addon info <nome>` — versão, descrição, estado, healthcheck ao vivo.
+  Whitelist normal — somente leitura, não muda estado.
 - `/addon enable <nome>` / `/addon disable <nome>` — não afeta addons já
   carregados, só se participam de `/find`. Estado sobrevive a restart
-  (`ADDONS_STATE_PATH`).
+  (`ADDONS_STATE_PATH`). **Restrito a `OWNER_USER_ID`.**
 - `/addon reload <nome>` — recarrega `plugin.py` do disco sem reiniciar o
   processo. Se o reload falhar (erro de sintaxe, exceção no construtor), o
-  addon anterior continua carregado e ativo.
+  addon anterior continua carregado e ativo. **Restrito a `OWNER_USER_ID`.**
 - `/addon uninstall <nome>` — descarrega e **apaga a pasta do addon do
-  disco**. Ação destrutiva, sem confirmação adicional no chat.
+  disco**. Ação destrutiva, sem confirmação adicional no chat. **Restrito a
+  `OWNER_USER_ID`.**
+
+As quatro ações acima carregam/descarregam ou apagam código Python de
+terceiro no mesmo processo que tem a `SESSION_STRING` — por isso exigem
+`OWNER_USER_ID`, um único `user_id`, mesmo que `AUTHORIZED_USER_IDS=all`
+libere o resto dos comandos para qualquer membro do grupo (ver Segurança).
 
 Instalar um addon novo hoje é manual: colocar a pasta em `addons/<nome>/`
 (local ou via volume Docker) e reiniciar o processo (ou, se `addons_path` já
@@ -268,9 +280,47 @@ Ponte para addons Stremio externos de terceiros (protocolo HTTP/JSON:
 executa código de terceiros — só fala HTTP com URLs que o operador já
 configurou em `config/addons/stremio.json`. Sem upstreams configurados, o
 addon fica inerte (`/find` não retorna nada dele, `health()` não saudável).
-Só resolve streams com URL HTTP(S)/HLS/RTMP/RTSP direta — magnet
-links/torrents não são suportados. Detalhes e exemplo de configuração em
-`addons/stremio/README.md`.
+Streams com URL HTTP(S)/HLS/RTMP/RTSP direta são reproduzidos normalmente;
+streams só com `infoHash`/magnet (torrent sem serviço de debrid, caso comum
+do Torrentio) são resolvidos via qBittorrent — ver
+[Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent).
+Detalhes e exemplo de configuração em `addons/stremio/README.md`.
+
+## Suporte a torrents via qBittorrent
+
+Addons que só devolvem `infoHash`/magnet — sem uma URL HTTP direta — são um
+caso comum quando o addon Stremio configurado (ex.: Torrentio) não tem um
+serviço de debrid por trás. Em vez de descartar esses candidatos, o bot os
+resolve através de uma instância qBittorrent já existente, controlada pela
+Web API (`app/services/qbittorrent_client.py`): adiciona o magnet, aguarda a
+metadata chegar, seleciona o maior arquivo de vídeo (ignora samples e
+arquivos pequenos), aguarda um buffer mínimo baixado e então entrega o
+caminho local do arquivo ao mesmo pipeline de reprodução usado por qualquer
+arquivo local (`app/services/torrent_service.py`).
+
+**Sem cópia, sem arquivo temporário**: o FFmpeg lê o arquivo direto de onde
+o qBittorrent está gravando, ainda em download (`sequentialDownload` +
+`firstLastPiecePrio` são sempre habilitados ao adicionar o torrent, para que
+o início do arquivo esteja disponível assim que o buffer mínimo for
+atingido). Isso só funciona se `QBITTORRENT_SAVE_PATH` for um caminho
+**acessível localmente pelo processo do bridge** — mesma máquina, ou mesmo
+volume compartilhado em Docker. `QBITTORRENT_HOST`/`QBITTORRENT_PORT`
+apontam para onde a Web API responde (pode estar em outro host), mas o
+**disco** de download precisa ser visível localmente; recomenda-se manter
+`QBITTORRENT_SAVE_PATH` como um subdiretório de `MEDIA_PATH`. Em Docker,
+isso significa montar o mesmo volume de mídia no container do qBittorrent.
+
+Se a metadata ou o buffer mínimo não chegarem dentro de `TORRENT_TIMEOUT_SECONDS`,
+o candidato falha: em `/pick` (comando) o bot tenta o próximo candidato da
+lista automaticamente; no botão de `/find` (que já resolveu um candidato
+específico por addon) não há fallback — a interação mostra um alerta pedindo
+para buscar de novo. Sem uma instância qBittorrent configurada e acessível,
+todo candidato só-torrent falha da mesma forma.
+
+Por padrão o torrent continua semeando após o fim da reprodução (para não
+prejudicar a "saúde" do torrent na rede); `REMOVE_TORRENT_AFTER_PLAY=true`
+remove o torrent (e os arquivos baixados) assim que a reprodução passa para
+outra fonte.
 
 ### O que **não** existe (de propósito)
 
@@ -300,6 +350,7 @@ cp .env.example .env
 | `SESSION_STRING` | sim | String de sessão Pyrogram/Kurigram (ver abaixo) |
 | `CHAT_ID` | sim | Chat/grupo onde a chamada acontece |
 | `AUTHORIZED_USER_IDS` | não (mas fica inutilizável sem) | `user_id` separados por vírgula, ou `all` para qualquer membro atual do grupo em `CHAT_ID` |
+| `OWNER_USER_ID` | não (mas ninguém gerencia addons sem) | `user_id` autorizado a `/addon enable\|disable\|reload\|uninstall` — restrito a um único operador mesmo com `AUTHORIZED_USER_IDS=all` (ver Segurança) |
 | `LOG_LEVEL`, `LOG_DIR`, `LOG_ROTATION`, `LOG_RETENTION` | não | ver seção Logs |
 | `FFMPEG_PATH`, `MEDIA_PATH` | não | padrão: `ffmpeg` no PATH, pasta `media/` |
 | `FFMPEG_MAX_CONCURRENT` | não | máx. processos FFmpeg simultâneos (v1: 1) |
@@ -313,21 +364,30 @@ cp .env.example .env
 | `ADDONS_CONFIG_PATH` | não | pasta com config própria de cada addon (padrão `config/addons/`) |
 | `ADDON_SEARCH_TIMEOUT_SECONDS`, `ADDON_STREAMS_TIMEOUT_SECONDS` | não | timeout por addon em `/find`/`/pick` (padrão 10s cada) |
 | `ADDON_SEARCH_CACHE_TTL_SECONDS` | não | TTL do cache de resultados de `/find` (padrão 300s) |
+| `QBITTORRENT_HOST`, `QBITTORRENT_PORT` | não | endereço da Web API do qBittorrent (padrão `localhost:8080`) |
+| `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD` | não | credenciais da Web API do qBittorrent (padrão `admin`/vazio) |
+| `QBITTORRENT_CATEGORY` | não | categoria aplicada aos torrents adicionados pelo bot, se definida |
+| `QBITTORRENT_SAVE_PATH` | não | diretório de download dos torrents — precisa ser acessível localmente pelo bridge (padrão `media/torrents`, ver [Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent)) |
+| `TORRENT_BUFFER_MB` | não | buffer mínimo (MB) baixado antes de liberar ao FFmpeg (padrão 50) |
+| `TORRENT_TIMEOUT_SECONDS` | não | prazo (s) para metadata/buffer antes de desistir do candidato (padrão 60) |
+| `REMOVE_TORRENT_AFTER_PLAY` | não | remove o torrent do qBittorrent ao fim da reprodução (padrão `false`, mantém em seed) |
 
-Nunca versione `.env` (já está no `.gitignore`). `API_HASH` e
-`SESSION_STRING` são mascarados em todo log (`***MASKED***`) e nunca aparecem
-em texto plano em nenhum arquivo de log.
+Nunca versione `.env` (já está no `.gitignore`). `API_HASH`,
+`SESSION_STRING`, `TMDB_API_KEY` e `QBITTORRENT_PASSWORD` são mascarados em
+todo log (`***MASKED***`) e nunca aparecem em texto plano em nenhum arquivo
+de log.
 
 ### Gerando o `SESSION_STRING`
 
 Com Kurigram instalado localmente (`uv sync` já traz), rode uma vez:
 
-```python
-from pyrogram import Client
-
-with Client("gerar-sessao", api_id=SEU_API_ID, api_hash="SEU_API_HASH", in_memory=True) as app:
-    print(app.export_session_string())
+```bash
+uv run python scripts/generate_session.py
 ```
+
+O script pede `API_ID`/`API_HASH`, depois número de telefone, código de
+login enviado pelo Telegram e, se a conta tiver 2FA, a senha — ao final,
+imprime a `SESSION_STRING` para colar em `.env` (nunca a salva em disco).
 
 Use uma conta com permissão para participar de chamadas no grupo/canal alvo.
 Essa é a **mesma conta** que recebe os comandos do bot (ver arquitetura —
@@ -372,7 +432,8 @@ tentativas, 1s de jitter.
 ## Segurança
 
 - Nenhuma credencial hardcoded — tudo via `.env`/`Settings`.
-- `SESSION_STRING`/`API_HASH` mascarados em logs.
+- `SESSION_STRING`/`API_HASH`/`TMDB_API_KEY`/`QBITTORRENT_PASSWORD`
+  mascarados em logs.
 - Entrada de `/play` validada antes de chegar ao FFmpeg
   (`app/utils/sanitize.py`): rejeita entradas que comecem com `-` (evita
   injeção de flags), caracteres de controle, esquemas de URL não suportados,
@@ -388,6 +449,13 @@ tentativas, 1s de jitter.
   propósito" na seção de addons). Instalar um addon hoje exige acesso ao
   filesystem/deploy, o mesmo nível de confiança já exigido para editar
   `.env` ou o código do bot.
+- Gerenciar addons já instalados (`/addon enable|disable|reload|uninstall`)
+  fica restrito a `OWNER_USER_ID` — um único `user_id`, separado da whitelist
+  geral de `AUTHORIZED_USER_IDS` (que pode ser `all`, ou seja, qualquer
+  membro do grupo). Sem essa separação, qualquer membro autorizado a tocar
+  vídeo também poderia desabilitar/recarregar código de terceiro no mesmo
+  processo que guarda a `SESSION_STRING`. `/addon info` (somente leitura)
+  continua disponível a qualquer usuário autorizado.
 
 ## Execução local
 

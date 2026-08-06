@@ -17,6 +17,8 @@ from app.bot.client import build_bot
 from app.config.settings import get_settings
 from app.services.addon_service import AddonService
 from app.services.playback_service import PlaybackService
+from app.services.tmdb_service import TMDBService
+from app.services.torrent_service import TorrentService
 from app.utils.logging import get_logger, setup_logging
 
 _logger = get_logger("services")
@@ -38,8 +40,11 @@ async def _run() -> None:
     asyncio.get_running_loop().set_exception_handler(_handle_task_exception)
 
     service = PlaybackService(settings)
-    addon_service = AddonService(settings, service)
-    build_bot(service, addon_service, settings)
+    torrent_service = TorrentService(settings)
+    service.set_source_released_callback(torrent_service.release)
+    addon_service = AddonService(settings, service, torrent_service)
+    tmdb_service = TMDBService(settings)
+    build_bot(service, addon_service, settings, tmdb_service)
 
     await service.start()
     await addon_service.start()
@@ -57,6 +62,8 @@ async def _run() -> None:
     finally:
         _logger.info("Encerrando...")
         await service.shutdown()
+        await tmdb_service.close()
+        await torrent_service.close()
 
 
 def main() -> None:

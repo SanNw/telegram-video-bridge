@@ -16,6 +16,7 @@ saber qual é o próximo da fila) e uma falha permanente de qualquer uma das dua
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from pyrogram import Client
@@ -28,7 +29,7 @@ from app.services.models import ServiceStatus
 from app.streaming.ffmpeg_streamer import FFmpegStreamer
 from app.telegram.call_manager import TelegramCallManager
 from app.utils.logging import get_logger
-from app.utils.sanitize import resolve_source
+from app.utils.sanitize import MediaSource, resolve_source
 
 _logger = get_logger("services")
 
@@ -52,6 +53,16 @@ class PlaybackService:
         self._streamer.set_completion_callback(self._handle_item_completed)
         self._streamer.set_permanent_failure_callback(self._handle_streamer_permanent_failure)
         self._call_manager.set_permanent_failure_callback(self._handle_call_permanent_failure)
+
+    def set_source_released_callback(
+        self, callback: Callable[[MediaSource], Awaitable[None]]
+    ) -> None:
+        """Registra callback chamado quando uma fonte deixa de ser a atual.
+
+        Repassa direto para `FFmpegStreamer` — usado por `TorrentService.release`
+        para decidir se remove o torrent do qBittorrent ou o mantém em seed.
+        """
+        self._streamer.set_source_released_callback(callback)
 
     @property
     def client(self) -> Client:

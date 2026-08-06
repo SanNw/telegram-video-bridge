@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.addon_system.base import AddonHealth, SearchResult
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo
 from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
+from app.services.tmdb_service import TMDBMetadata
 
 
 def format_status(status: ServiceStatus) -> str:
@@ -103,3 +106,82 @@ def format_search_results(results: list[SearchResult]) -> str:
         lines.append(f"{position}. {result.title}{year_suffix} — _{result.addon_name}_")
     lines.append("\nUse `/pick <número>` para adicionar à fila.")
     return "\n".join(lines)
+
+
+def format_tmdb_rich_message(result: SearchResult, metadata: TMDBMetadata) -> str:
+    """Formata o HTML de uma Rich Message (`InputRichMessage(html=...)`) com metadados do TMDB.
+
+    Destaque do primeiro resultado de `/find`: título, pôster (`<img>`, mídia
+    sempre como bloco separado — o protocolo de Rich Message não permite
+    mídia inline), sinopse, carrossel de fotos do filme (`<tg-slideshow>`),
+    carrossel de fotos do elenco + lista de nomes, e uma tabela com
+    nota/gêneros/lançamento.
+
+    O título e o ano exibidos vêm do próprio TMDB (`metadata.title` e
+    `metadata.release_date`), não do `result` do addon — `result` já serve
+    apenas de fallback de ano quando o TMDB não traz `release_date`.
+    """
+    year = metadata.release_date[:4] if metadata.release_date else (str(result.year) if result.year else "")
+    year_suffix = f" ({year})" if year else ""
+    lines = [f"<h2>{_escape_html(metadata.title)}{year_suffix}</h2>"]
+    if metadata.poster_url:
+        lines.append(f'<img src="{_escape_html(metadata.poster_url)}"/>')
+    if metadata.overview:
+        lines.append(f"<p>{_escape_html(metadata.overview)}</p>")
+
+    if metadata.backdrop_urls:
+        images = "".join(f'<img src="{_escape_html(url)}"/>' for url in metadata.backdrop_urls)
+        lines.append(f"<tg-slideshow>{images}</tg-slideshow>")
+
+    if metadata.cast:
+        photo_urls = [member.profile_url for member in metadata.cast if member.profile_url]
+        if photo_urls:
+            images = "".join(f'<img src="{_escape_html(url)}"/>' for url in photo_urls)
+            lines.append(f"<tg-slideshow>{images}</tg-slideshow>")
+        names = ", ".join(_escape_html(member.name) for member in metadata.cast)
+        lines.append(f"<p>Elenco: {names}</p>")
+
+    rating = f"{metadata.vote_average:.1f}" if metadata.vote_average else "—"
+    genres = ", ".join(metadata.genres) if metadata.genres else "—"
+    release = metadata.release_date or "—"
+    lines.append(
+        "<table bordered>"
+        "<tr><th>Nota</th><th>Gêneros</th><th>Lançamento</th></tr>"
+        f"<tr><td>{_escape_html(rating)}</td>"
+        f"<td>{_escape_html(genres)}</td>"
+        f"<td>{_escape_html(release)}</td></tr>"
+        "</table>"
+    )
+    return "".join(lines)
+
+
+def format_stream_buttons(
+    candidates: list[tuple[str, SearchResult, StreamCandidate]],
+) -> InlineKeyboardMarkup:
+    """Monta os botões inline da Rich Message de `/find`, um por addon resolvido.
+
+    `candidates` vem de `AddonService.resolve_top_candidates()`: tokens curtos
+    que identificam cada `(SearchResult, StreamCandidate)` para o handler de
+    callback query resolver de volta em `AddonService.pick_candidate`.
+    """
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text=_format_stream_button_label(result.addon_name, candidate.quality),
+                    callback_data=f"play:{token}",
+                )
+            ]
+            for token, result, candidate in candidates
+        ]
+    )
+
+
+def _format_stream_button_label(addon_name: str, quality: str | None) -> str:
+    quality_suffix = f" ({quality})" if quality else ""
+    return f"▶️ {addon_name}{quality_suffix}"
+
+
+def _escape_html(text: str) -> str:
+    """Escapa manualmente `&`, `<`, `>` — `InputRichMessage(html=...)` não escapa automaticamente."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

@@ -91,6 +91,26 @@ def test_masked_dict_never_exposes_secrets(make_settings: Callable[..., Settings
     assert masked["session_string"] == "***MASKED***"
 
 
+def test_masked_dict_masks_tmdb_api_key_when_set(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings(tmdb_api_key="super-secret-tmdb-key")
+    masked = settings.masked_dict()
+    assert "super-secret-tmdb-key" not in str(masked)
+    assert masked["tmdb_api_key"] == "***MASKED***"
+
+
+def test_masked_dict_omits_tmdb_api_key_when_unset(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings()
+    masked = settings.masked_dict()
+    assert masked["tmdb_api_key"] is None
+
+
+def test_tmdb_defaults(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings()
+    assert settings.tmdb_api_key is None
+    assert settings.tmdb_language == "pt-BR"
+    assert settings.tmdb_request_timeout_seconds == 10.0
+
+
 def test_secret_str_repr_does_not_leak_value(make_settings: Callable[..., Settings]) -> None:
     settings = make_settings(api_hash="super-secret-hash")
     assert "super-secret-hash" not in repr(settings.api_hash)

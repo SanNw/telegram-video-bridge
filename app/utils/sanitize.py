@@ -27,7 +27,7 @@ class InvalidSourceError(ValueError):
     """Levantado quando a fonte fornecida pelo usuário é inválida ou insegura."""
 
 
-_ALLOWED_LOCAL_EXTENSIONS = frozenset({".mp4", ".mkv", ".avi", ".mov"})
+_ALLOWED_LOCAL_EXTENSIONS = frozenset({".mp4", ".mkv", ".avi", ".mov", ".ts", ".m2ts"})
 _ALLOWED_SCHEMES = frozenset({"http", "https", "rtmp", "rtmps", "rtsp"})
 _CONTROL_CHARS = frozenset({"\n", "\r", "\x00"})
 

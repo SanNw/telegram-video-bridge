@@ -22,6 +22,13 @@ from app.utils.logging import get_logger
 _logger = get_logger("services")
 
 _DEFAULT_TIMEOUT_SECONDS = 10.0
+# Alguns addons Stremio (ex.: Torrentio) ficam atrás de proteção anti-bot que
+# rejeita com 403 o User-Agent padrão do httpx ("python-httpx/x.y.z"). Um
+# User-Agent de navegador comum contorna o filtro sem alterar o protocolo.
+_DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 class StremioAddonClient:
@@ -41,7 +48,9 @@ class StremioAddonClient:
             timeout_seconds: Timeout de rede aplicado a toda requisição.
         """
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=timeout_seconds)
+        self._client = httpx.AsyncClient(
+            timeout=timeout_seconds, headers={"User-Agent": _DEFAULT_USER_AGENT}
+        )
 
     @property
     def base_url(self) -> str:

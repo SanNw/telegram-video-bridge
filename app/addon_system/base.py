@@ -37,14 +37,32 @@ class Metadata:
 class StreamCandidate:
     """Uma fonte reproduzível concreta, devolvida por `BaseAddon.get_streams`.
 
-    `url` deve ser algo que `utils.sanitize.resolve_source` já sabe validar
-    (hoje: HTTP/HTTPS direto, HLS, RTMP, RTSP) — o addon não decide como o
-    vídeo é transmitido, só de onde ele vem.
+    Dois modos, mutuamente exclusivos:
+
+    * `url` preenchido: algo que `utils.sanitize.resolve_source` já sabe
+      validar (HTTP/HTTPS direto, HLS, RTMP, RTSP) — reproduzido diretamente
+      pelo FFmpeg, fluxo de sempre.
+    * `url` ausente e `info_hash`/`magnet` preenchido: torrent sem fonte
+      HTTP direta (ex.: Torrentio sem debrid configurado) — resolvido via
+      `app.services.torrent_service.TorrentService` antes de chegar ao
+      FFmpeg. `file_index`, se conhecido, indica qual arquivo do torrent é o
+      vídeo principal (evita a heurística de "maior arquivo de vídeo").
+
+    O addon não decide como o vídeo é transmitido, só de onde ele vem.
+
+    `seeds`/`size_bytes` são opcionais e só preenchidos por addons cuja fonte
+    exponha essa informação (ex.: `stremio`, extraída do texto do stream) —
+    usados para priorização; `None` significa "desconhecido", não "zero".
     """
 
-    url: str
     title: str
+    url: str | None = None
+    info_hash: str | None = None
+    magnet: str | None = None
+    file_index: int | None = None
     quality: str | None = None
+    seeds: int | None = None
+    size_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

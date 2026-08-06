@@ -15,7 +15,11 @@ import app.services.addon_service as addon_service_module
 from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo
 from app.services.addon_service import AddonService
-from app.services.exceptions import InvalidSearchIndexError, NoStreamsAvailableError
+from app.services.exceptions import (
+    InvalidSearchIndexError,
+    NoStreamsAvailableError,
+    TorrentTimeoutError,
+)
 
 
 class _FakeManager:
@@ -30,6 +34,8 @@ class _FakeManager:
         self.uninstall_calls: list[str] = []
         self.search_results: list[SearchResult] = []
         self.stream_results: list[StreamCandidate] = []
+        self.stream_results_by_addon: dict[str, list[StreamCandidate] | Exception] = {}
+        self.get_streams_calls: list[tuple[str, str]] = []
 
     async def discover(self) -> None:
         self.discovered = True
@@ -60,7 +66,25 @@ class _FakeManager:
         return self.search_results
 
     async def get_streams(self, addon_name: str, media_id: str) -> list[StreamCandidate]:
+        self.get_streams_calls.append((addon_name, media_id))
+        if addon_name in self.stream_results_by_addon:
+            outcome = self.stream_results_by_addon[addon_name]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
         return self.stream_results
+
+
+class _FakeTorrentService:
+    def __init__(self) -> None:
+        self.resolve_calls: list[StreamCandidate] = []
+        self.resolve_result: str | Exception = "/media/torrents/movie.mkv"
+
+    async def resolve(self, candidate: StreamCandidate) -> str:
+        self.resolve_calls.append(candidate)
+        if isinstance(self.resolve_result, Exception):
+            raise self.resolve_result
+        return self.resolve_result
 
 
 @pytest.fixture
@@ -78,8 +102,18 @@ def playback() -> MagicMock:
 
 
 @pytest.fixture
-def service(fake_manager: _FakeManager, playback: MagicMock, settings: object) -> AddonService:
-    return AddonService(settings, playback)  # type: ignore[arg-type]
+def torrent_service() -> _FakeTorrentService:
+    return _FakeTorrentService()
+
+
+@pytest.fixture
+def service(
+    fake_manager: _FakeManager,
+    playback: MagicMock,
+    torrent_service: _FakeTorrentService,
+    settings: object,
+) -> AddonService:
+    return AddonService(settings, playback, torrent_service)  # type: ignore[arg-type]
 
 
 async def test_start_discovers_addons(service: AddonService, fake_manager: _FakeManager) -> None:
@@ -169,3 +203,221 @@ async def test_pick_success_plays_best_stream(
 
     assert position == 3
     playback.play.assert_awaited_once_with("https://example.com/best.mp4", 111)
+
+
+async def test_resolve_top_candidates_dedups_by_addon(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+        SearchResult(media_id="2", title="Movie A (dup)", addon_name="archive_org"),
+        SearchResult(media_id="3", title="Movie A", addon_name="stremio"),
+    ]
+    await service.find("movie")
+    fake_manager.stream_results_by_addon = {
+        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
+        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s", quality="1080p")],
+    }
+
+    candidates = await service.resolve_top_candidates()
+
+    assert [addon for addon, _ in fake_manager.get_streams_calls] == ["archive_org", "stremio"]
+    assert [result.addon_name for _, result, _ in candidates] == ["archive_org", "stremio"]
+
+
+async def test_resolve_top_candidates_isolates_addon_failure(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+        SearchResult(media_id="3", title="Movie A", addon_name="stremio"),
+    ]
+    await service.find("movie")
+    fake_manager.stream_results_by_addon = {
+        "archive_org": RuntimeError("boom"),
+        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s")],
+    }
+
+    candidates = await service.resolve_top_candidates()
+
+    assert [result.addon_name for _, result, _ in candidates] == ["stremio"]
+
+
+async def test_resolve_top_candidates_skips_addon_with_no_streams(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+        SearchResult(media_id="3", title="Movie A", addon_name="stremio"),
+    ]
+    await service.find("movie")
+    fake_manager.stream_results_by_addon = {
+        "archive_org": [],
+        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s")],
+    }
+
+    candidates = await service.resolve_top_candidates()
+
+    assert [result.addon_name for _, result, _ in candidates] == ["stremio"]
+
+
+async def test_pick_candidate_success_plays_and_returns_addon_name(
+    service: AddonService, fake_manager: _FakeManager, playback: MagicMock
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+    ]
+    await service.find("movie")
+    fake_manager.stream_results_by_addon = {
+        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
+    }
+    candidates = await service.resolve_top_candidates()
+    token = candidates[0][0]
+
+    addon_name, position = await service.pick_candidate(token, requested_by=111)
+
+    assert addon_name == "archive_org"
+    assert position == 3
+    playback.play.assert_awaited_once_with("https://a.example/1.mp4", 111)
+
+
+async def test_pick_candidate_unknown_token_raises(service: AddonService) -> None:
+    with pytest.raises(InvalidSearchIndexError):
+        await service.pick_candidate("0", requested_by=111)
+
+
+async def test_pick_candidate_token_invalidated_by_new_find(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+    ]
+    await service.find("movie")
+    fake_manager.stream_results_by_addon = {
+        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
+    }
+    candidates = await service.resolve_top_candidates()
+    token = candidates[0][0]
+
+    await service.find("movie again")
+
+    with pytest.raises(InvalidSearchIndexError):
+        await service.pick_candidate(token, requested_by=111)
+
+
+# ---------------------------------------------------------------------------
+# Resolução via torrent (candidatos sem url, só infoHash)
+# ---------------------------------------------------------------------------
+
+
+async def test_pick_resolves_torrent_candidate_and_plays_path(
+    service: AddonService,
+    fake_manager: _FakeManager,
+    playback: MagicMock,
+    torrent_service: _FakeTorrentService,
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie", addon_name="archive_org")
+    ]
+    await service.find("movie")
+    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    fake_manager.stream_results = [torrent_candidate]
+    torrent_service.resolve_result = "/media/torrents/movie.mkv"
+
+    position = await service.pick(1, requested_by=111)
+
+    assert position == 3
+    assert torrent_service.resolve_calls == [torrent_candidate]
+    playback.play.assert_awaited_once_with("/media/torrents/movie.mkv", 111)
+
+
+async def test_pick_falls_back_to_next_candidate_on_torrent_timeout(
+    service: AddonService,
+    fake_manager: _FakeManager,
+    playback: MagicMock,
+    torrent_service: _FakeTorrentService,
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie", addon_name="archive_org")
+    ]
+    await service.find("movie")
+    timed_out = StreamCandidate(url=None, info_hash="timeout-hash", title="slow")
+    fallback = StreamCandidate(url="https://example.com/fallback.mp4", title="fallback")
+    fake_manager.stream_results = [timed_out, fallback]
+
+    calls = {"count": 0}
+
+    async def resolve(candidate: StreamCandidate) -> str:
+        calls["count"] += 1
+        if candidate is timed_out:
+            raise TorrentTimeoutError("timeout")
+        return "/media/torrents/should-not-happen.mkv"
+
+    torrent_service.resolve = resolve  # type: ignore[method-assign]
+
+    position = await service.pick(1, requested_by=111)
+
+    assert position == 3
+    assert calls["count"] == 1
+    playback.play.assert_awaited_once_with("https://example.com/fallback.mp4", 111)
+
+
+async def test_pick_raises_when_all_torrent_candidates_timeout(
+    service: AddonService,
+    fake_manager: _FakeManager,
+    torrent_service: _FakeTorrentService,
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie", addon_name="archive_org")
+    ]
+    await service.find("movie")
+    fake_manager.stream_results = [
+        StreamCandidate(url=None, info_hash="hash-1", title="a"),
+        StreamCandidate(url=None, info_hash="hash-2", title="b"),
+    ]
+    torrent_service.resolve_result = TorrentTimeoutError("timeout")
+
+    with pytest.raises(NoStreamsAvailableError):
+        await service.pick(1, requested_by=111)
+
+
+async def test_pick_candidate_resolves_torrent_and_plays_path(
+    service: AddonService,
+    fake_manager: _FakeManager,
+    playback: MagicMock,
+    torrent_service: _FakeTorrentService,
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+    ]
+    await service.find("movie")
+    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    fake_manager.stream_results_by_addon = {"archive_org": [torrent_candidate]}
+    candidates = await service.resolve_top_candidates()
+    token = candidates[0][0]
+    torrent_service.resolve_result = "/media/torrents/movie.mkv"
+
+    addon_name, position = await service.pick_candidate(token, requested_by=111)
+
+    assert addon_name == "archive_org"
+    assert position == 3
+    playback.play.assert_awaited_once_with("/media/torrents/movie.mkv", 111)
+
+
+async def test_pick_candidate_does_not_fall_back_on_torrent_timeout(
+    service: AddonService,
+    fake_manager: _FakeManager,
+    torrent_service: _FakeTorrentService,
+) -> None:
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
+    ]
+    await service.find("movie")
+    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    fake_manager.stream_results_by_addon = {"archive_org": [torrent_candidate]}
+    candidates = await service.resolve_top_candidates()
+    token = candidates[0][0]
+    torrent_service.resolve_result = TorrentTimeoutError("timeout")
+
+    with pytest.raises(TorrentTimeoutError):
+        await service.pick_candidate(token, requested_by=111)

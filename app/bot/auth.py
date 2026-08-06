@@ -8,6 +8,11 @@ colateral (`/start`, `/help`, `/ping`, `/version`) são públicos.
 `CHAT_ID` — não qualquer usuário do Telegram. A checagem é feita em tempo
 real via `get_chat_member`, então quem sai ou é banido do grupo perde acesso
 imediatamente, sem precisar reiniciar o processo.
+
+Gerenciamento de addons (enable/disable/reload/uninstall) usa um filtro à
+parte, `build_owner_filter`: exige `Settings.owner_user_id` mesmo quando
+`AUTHORIZED_USER_IDS=all` — instalar/remover addons executa código de
+terceiro no mesmo processo que tem a `SESSION_STRING`.
 """
 
 from __future__ import annotations
@@ -44,3 +49,22 @@ def build_authorized_filter(settings: Settings) -> filters.Filter:
         return user.id in settings.authorized_user_ids
 
     return filters.create(_is_authorized)
+
+
+def build_owner_filter(settings: Settings) -> filters.Filter:
+    """Filtro Pyrogram: verdadeiro só para `settings.owner_user_id`.
+
+    Usado para ações de gerenciamento de addons (enable/disable/reload/
+    uninstall) — instalam/desinstalam código de terceiro no mesmo processo
+    que tem a `SESSION_STRING`, então não devem ficar sob
+    `AUTHORIZED_USER_IDS=all` (qualquer membro do grupo). Sem `OWNER_USER_ID`
+    configurado, nega a todos (fail-safe).
+    """
+
+    async def _is_owner(_flt: Any, _client: Any, message: Message) -> bool:
+        user = message.from_user
+        if user is None or settings.owner_user_id is None:
+            return False
+        return user.id == settings.owner_user_id
+
+    return filters.create(_is_owner)
