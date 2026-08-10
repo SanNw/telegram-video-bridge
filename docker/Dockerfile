@@ -39,6 +39,8 @@ WORKDIR /app
 
 COPY --from=builder /build/.venv /app/.venv
 COPY app ./app
+COPY addons ./addons
+COPY config ./config
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1

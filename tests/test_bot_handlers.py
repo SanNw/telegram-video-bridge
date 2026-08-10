@@ -263,6 +263,7 @@ class _FakeAddonService:
         self.pick_candidate_calls: list[tuple[str, int]] = []
         self.pick_candidate_result: tuple[str, int] = ("archive_org", 1)
         self.pick_candidate_exception: Exception | None = None
+        self.last_metadata_result: TMDBMetadata | None = None
 
     def list_addons(self) -> list[AddonInfo]:
         return self.addons_list
@@ -300,6 +301,9 @@ class _FakeAddonService:
         self.find_calls.append(query)
         return self.find_result
 
+    def last_metadata(self) -> TMDBMetadata | None:
+        return self.last_metadata_result
+
     async def pick(self, index: int, requested_by: int) -> int:
         if self.pick_exception is not None:
             raise self.pick_exception
@@ -334,36 +338,38 @@ def wired_client(
     return client, service, settings
 
 
-class _FakeTMDBService:
-    def __init__(self, *, enabled: bool = False) -> None:
-        self._enabled = enabled
-        self.enrich_calls: list[tuple[str, int | None]] = []
-        self.enrich_result: TMDBMetadata | None = None
-
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
-
-    async def enrich(self, title: str, year: int | None) -> TMDBMetadata | None:
-        self.enrich_calls.append((title, year))
-        return self.enrich_result
-
-
 @pytest.fixture
 def addon_wired_client(
     make_settings: Callable[..., Settings],
-) -> tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService]:
+) -> tuple[FakeClient, _FakeAddonService, Settings]:
     settings = make_settings(authorized_user_ids=[111, 222], owner_user_id=111)
     client = FakeClient()
     addon_service = _FakeAddonService()
-    tmdb_service = _FakeTMDBService()
     authorized = build_authorized_filter(settings)
     owner = build_owner_filter(settings)
 
-    addons.register(client, addon_service, authorized, owner, tmdb_service)  # type: ignore[arg-type]
+    addons.register_management(client, addon_service, authorized, owner)  # type: ignore[arg-type]
+    addons.register_search(client, addon_service, authorized, buttons_enabled=True)  # type: ignore[arg-type]
     unauthorized.register(client)  # type: ignore[arg-type]
 
-    return client, addon_service, settings, tmdb_service
+    return client, addon_service, settings
+
+
+@pytest.fixture
+def addon_wired_client_no_buttons(
+    make_settings: Callable[..., Settings],
+) -> tuple[FakeClient, _FakeAddonService, Settings]:
+    settings = make_settings(authorized_user_ids=[111, 222], owner_user_id=111)
+    client = FakeClient()
+    addon_service = _FakeAddonService()
+    authorized = build_authorized_filter(settings)
+    owner = build_owner_filter(settings)
+
+    addons.register_management(client, addon_service, authorized, owner)  # type: ignore[arg-type]
+    addons.register_search(client, addon_service, authorized, buttons_enabled=False)  # type: ignore[arg-type]
+    unauthorized.register(client)  # type: ignore[arg-type]
+
+    return client, addon_service, settings
 
 
 # --- autorização (app/bot/auth.py) ---
@@ -899,9 +905,9 @@ async def test_uptime_formats_duration(
 
 
 async def test_addons_authorized_lists_installed(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.addons_list = [
         AddonInfo(name="archive_org", version="1.0.0", description="desc", enabled=True)
     ]
@@ -912,45 +918,45 @@ async def test_addons_authorized_lists_installed(
 
 
 async def test_addons_unauthorized_is_rejected(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/addons", user_id=999)
     await dispatch(client, message)
     assert "permissão" in message.replies[0]
 
 
 async def test_addon_without_arguments_shows_usage(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/addon", user_id=111)
     await dispatch(client, message)
     assert "Uso:" in message.replies[0]
 
 
 async def test_addon_unknown_action(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/addon frobnicate archive_org", user_id=111)
     await dispatch(client, message)
     assert "desconhecida" in message.replies[0]
 
 
 async def test_addon_action_without_name_shows_usage(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/addon enable", user_id=111)
     await dispatch(client, message)
     assert "Uso:" in message.replies[0]
 
 
 async def test_addon_info_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.info_result = AddonInfo(
         name="archive_org", version="1.0.0", description="desc", enabled=True
     )
@@ -962,9 +968,9 @@ async def test_addon_info_success(
 
 
 async def test_addon_info_unknown_addon(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.info_exception = AddonNotFoundError("Addon não encontrado: 'nope'")
     message = FakeMessage(text="/addon info nope", user_id=111)
     await dispatch(client, message)
@@ -972,9 +978,9 @@ async def test_addon_info_unknown_addon(
 
 
 async def test_addon_enable_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon enable archive_org", user_id=111)
     await dispatch(client, message)
     assert addon_service.enable_calls == ["archive_org"]
@@ -982,9 +988,9 @@ async def test_addon_enable_success(
 
 
 async def test_addon_disable_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon disable archive_org", user_id=111)
     await dispatch(client, message)
     assert addon_service.disable_calls == ["archive_org"]
@@ -992,9 +998,9 @@ async def test_addon_disable_success(
 
 
 async def test_addon_reload_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon reload archive_org", user_id=111)
     await dispatch(client, message)
     assert addon_service.reload_calls == ["archive_org"]
@@ -1002,9 +1008,9 @@ async def test_addon_reload_success(
 
 
 async def test_addon_uninstall_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon uninstall archive_org", user_id=111)
     await dispatch(client, message)
     assert addon_service.uninstall_calls == ["archive_org"]
@@ -1012,18 +1018,18 @@ async def test_addon_uninstall_success(
 
 
 async def test_addon_action_error_is_reported(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.action_exception = AddonNotFoundError("Addon não encontrado: 'nope'")
     message = FakeMessage(text="/addon enable nope", user_id=111)
     await dispatch(client, message)
     assert "não encontrado" in message.replies[0]
 
 async def test_addon_info_allowed_for_authorized_non_owner(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.info_result = AddonInfo(
         name="archive_org", version="1.0.0", description="desc", enabled=True
     )
@@ -1033,36 +1039,36 @@ async def test_addon_info_allowed_for_authorized_non_owner(
     assert "archive_org" in message.replies[0]
 
 async def test_addon_enable_rejected_for_authorized_non_owner(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon enable archive_org", user_id=222)
     await dispatch(client, message)
     assert addon_service.enable_calls == []
     assert "operador" in message.replies[0]
 
 async def test_addon_disable_rejected_for_authorized_non_owner(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon disable archive_org", user_id=222)
     await dispatch(client, message)
     assert addon_service.disable_calls == []
     assert "operador" in message.replies[0]
 
 async def test_addon_reload_rejected_for_authorized_non_owner(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon reload archive_org", user_id=222)
     await dispatch(client, message)
     assert addon_service.reload_calls == []
     assert "operador" in message.replies[0]
 
 async def test_addon_uninstall_rejected_for_authorized_non_owner(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/addon uninstall archive_org", user_id=222)
     await dispatch(client, message)
     assert addon_service.uninstall_calls == []
@@ -1074,10 +1080,10 @@ async def test_addon_enable_rejected_without_owner_configured(
     settings = make_settings(authorized_user_ids=[111])
     client = FakeClient()
     addon_service = _FakeAddonService()
-    tmdb_service = _FakeTMDBService()
     authorized = build_authorized_filter(settings)
     owner = build_owner_filter(settings)
-    addons.register(client, addon_service, authorized, owner, tmdb_service)  # type: ignore[arg-type]
+    addons.register_management(client, addon_service, authorized, owner)  # type: ignore[arg-type]
+    addons.register_search(client, addon_service, authorized, buttons_enabled=False)  # type: ignore[arg-type]
     unauthorized.register(client)  # type: ignore[arg-type]
 
     message = FakeMessage(text="/addon enable archive_org", user_id=111)
@@ -1087,9 +1093,9 @@ async def test_addon_enable_rejected_without_owner_configured(
 
 
 async def test_find_without_query_shows_usage(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/find", user_id=111)
     await dispatch(client, message)
     assert addon_service.find_calls == []
@@ -1097,9 +1103,9 @@ async def test_find_without_query_shows_usage(
 
 
 async def test_find_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.find_result = [
         SearchResult(
             media_id="abc", title="Night of the Living Dead", year=1968, addon_name="archive_org"
@@ -1112,22 +1118,22 @@ async def test_find_success(
 
 
 async def test_find_no_results(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.find_result = []
     message = FakeMessage(text="/find nonexistent", user_id=111)
     await dispatch(client, message)
     assert "Nenhum resultado" in message.replies[0]
 
 
-async def test_find_sends_rich_message_when_tmdb_enabled_and_found(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_find_sends_rich_message_when_tmdb_metadata_available(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
-    tmdb_service.enrich_result = TMDBMetadata(
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="Sinopse.",
         poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
         vote_average=7.8,
@@ -1143,21 +1149,21 @@ async def test_find_sends_rich_message_when_tmdb_enabled_and_found(
     ]
     message = FakeMessage(text="/find night of the living dead", user_id=111)
     await dispatch(client, message)
-    assert tmdb_service.enrich_calls == [("night of the living dead", 1968)]
+    assert addon_service.find_calls == ["night of the living dead"]
     assert len(client.rich_messages) == 1
     chat_id, rich_message = client.rich_messages[0]
     assert chat_id == message.chat.id
     assert "Night of the Living Dead" in rich_message.html
 
 
-async def test_find_no_plain_list_when_tmdb_finds_movie(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_find_also_sends_plain_list_when_tmdb_finds_movie(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    """Achando o filme no TMDB, a Rich Message substitui a lista de texto — não soma."""
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
-    tmdb_service.enrich_result = TMDBMetadata(
+    """A Rich Message não substitui a lista de texto — as duas são enviadas."""
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="Sinopse.",
         poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
         vote_average=7.8,
@@ -1174,14 +1180,15 @@ async def test_find_no_plain_list_when_tmdb_finds_movie(
     message = FakeMessage(text="/find night of the living dead", user_id=111)
     await dispatch(client, message)
     assert len(client.rich_messages) == 1
-    assert message.replies == []
+    assert len(message.replies) == 1
+    assert "Night of the Living Dead" in message.replies[0]
 
 
-async def test_find_no_rich_message_when_tmdb_disabled(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_find_no_rich_message_when_no_metadata(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    assert tmdb_service.enabled is False
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = None
     addon_service.find_result = [
         SearchResult(
             media_id="abc", title="Night of the Living Dead", year=1968, addon_name="archive_org"
@@ -1189,43 +1196,35 @@ async def test_find_no_rich_message_when_tmdb_disabled(
     ]
     message = FakeMessage(text="/find night of the living dead", user_id=111)
     await dispatch(client, message)
-    assert tmdb_service.enrich_calls == []
     assert client.rich_messages == []
+    assert len(message.replies) == 1
 
 
-async def test_find_no_rich_message_when_tmdb_finds_nothing(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_find_no_rich_message_when_no_results(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
-    tmdb_service.enrich_result = None
-    addon_service.find_result = [
-        SearchResult(
-            media_id="abc", title="Night of the Living Dead", year=1968, addon_name="archive_org"
-        )
-    ]
-    message = FakeMessage(text="/find night of the living dead", user_id=111)
-    await dispatch(client, message)
-    assert tmdb_service.enrich_calls == [("night of the living dead", 1968)]
-    assert client.rich_messages == []
-
-
-async def test_find_no_tmdb_call_when_no_results(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
-) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = TMDBMetadata(
+        title="Nonexistent",
+        original_title=None,
+        overview=None,
+        poster_url=None,
+        vote_average=None,
+        genres=[],
+        release_date=None,
+        cast=[],
+        backdrop_urls=[],
+    )
     addon_service.find_result = []
     message = FakeMessage(text="/find nonexistent", user_id=111)
     await dispatch(client, message)
-    assert tmdb_service.enrich_calls == []
     assert client.rich_messages == []
 
 
 async def test_pick_without_arguments_shows_usage(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/pick", user_id=111)
     await dispatch(client, message)
     assert addon_service.pick_calls == []
@@ -1233,9 +1232,9 @@ async def test_pick_without_arguments_shows_usage(
 
 
 async def test_pick_invalid_number(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     message = FakeMessage(text="/pick banana", user_id=111)
     await dispatch(client, message)
     assert addon_service.pick_calls == []
@@ -1243,9 +1242,9 @@ async def test_pick_invalid_number(
 
 
 async def test_pick_success(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_result = 3
     message = FakeMessage(text="/pick 1", user_id=111)
     await dispatch(client, message)
@@ -1253,10 +1252,32 @@ async def test_pick_success(
     assert "posição 3" in message.replies[0]
 
 
-async def test_pick_invalid_search_index(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_pick_success_stops_propagation(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    """Regressão: sem `stop_propagation()`, o fallback `_unauthorized` (group=1)
+    dispararia depois e responderia "sem permissão" mesmo com /pick bem-sucedido."""
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_result = 1
+    message = FakeMessage(text="/pick 1", user_id=111)
+    await dispatch(client, message)
+    assert message.propagated is False
+
+
+async def test_pick_failure_stops_propagation(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.pick_exception = InvalidSearchIndexError("Posição inválida: 5.")
+    message = FakeMessage(text="/pick 5", user_id=111)
+    await dispatch(client, message)
+    assert message.propagated is False
+
+
+async def test_pick_invalid_search_index(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_exception = InvalidSearchIndexError("Posição inválida: 5.")
     message = FakeMessage(text="/pick 5", user_id=111)
     await dispatch(client, message)
@@ -1264,9 +1285,9 @@ async def test_pick_invalid_search_index(
 
 
 async def test_pick_no_streams_available(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_exception = NoStreamsAvailableError("Nenhuma fonte reproduzível encontrada.")
     message = FakeMessage(text="/pick 1", user_id=111)
     await dispatch(client, message)
@@ -1274,9 +1295,9 @@ async def test_pick_no_streams_available(
 
 
 async def test_pick_invalid_source(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_exception = InvalidSourceError("fonte inválida")
     message = FakeMessage(text="/pick 1", user_id=111)
     await dispatch(client, message)
@@ -1284,9 +1305,9 @@ async def test_pick_invalid_source(
 
 
 async def test_pick_queue_full(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_exception = QueueFullError("fila cheia")
     message = FakeMessage(text="/pick 1", user_id=111)
     await dispatch(client, message)
@@ -1294,27 +1315,27 @@ async def test_pick_queue_full(
 
 
 async def test_find_unauthorized_is_rejected(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/find something", user_id=999)
     await dispatch(client, message)
     assert "permissão" in message.replies[0]
 
 
 async def test_pick_unauthorized_is_rejected(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/pick 1", user_id=999)
     await dispatch(client, message)
     assert "permissão" in message.replies[0]
 
 
 async def test_addon_unauthorized_is_rejected(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, _, _, _ = addon_wired_client
+    client, _, _ = addon_wired_client
     message = FakeMessage(text="/addon enable archive_org", user_id=999)
     await dispatch(client, message)
     assert "permissão" in message.replies[0]
@@ -1324,12 +1345,12 @@ async def test_addon_unauthorized_is_rejected(
 
 
 async def test_find_sends_reply_markup_with_one_button_per_addon(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
-    tmdb_service.enrich_result = TMDBMetadata(
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="Sinopse.",
         poster_url=None,
         vote_average=7.8,
@@ -1361,12 +1382,12 @@ async def test_find_sends_reply_markup_with_one_button_per_addon(
 
 
 async def test_find_no_reply_markup_when_no_candidates_resolved(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, tmdb_service = addon_wired_client
-    tmdb_service._enabled = True
-    tmdb_service.enrich_result = TMDBMetadata(
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="Sinopse.",
         poster_url=None,
         vote_average=7.8,
@@ -1388,10 +1409,45 @@ async def test_find_no_reply_markup_when_no_candidates_resolved(
     assert client.last_reply_markup is None
 
 
-async def test_play_candidate_success_answers_and_clears_markup(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+async def test_find_no_reply_markup_when_buttons_disabled(
+    addon_wired_client_no_buttons: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    """Sem `BOT_TOKEN` (client de sessão), a Rich Message nunca carrega botão."""
+    client, addon_service, _ = addon_wired_client_no_buttons
+    addon_service.last_metadata_result = TMDBMetadata(
+        title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
+        overview="Sinopse.",
+        poster_url=None,
+        vote_average=7.8,
+        genres=["Terror"],
+        release_date="1968-10-01",
+        cast=[],
+        backdrop_urls=[],
+    )
+    addon_service.find_result = [
+        SearchResult(
+            media_id="abc", title="Night of the Living Dead", year=1968, addon_name="archive_org"
+        )
+    ]
+    addon_service.resolve_candidates_result = [
+        (
+            "0",
+            addon_service.find_result[0],
+            StreamCandidate(url="https://a.example/1.mp4", title="a"),
+        ),
+    ]
+    message = FakeMessage(text="/find night of the living dead", user_id=111)
+    await dispatch(client, message)
+
+    assert len(client.rich_messages) == 1
+    assert client.last_reply_markup is None
+
+
+async def test_play_candidate_success_answers_and_clears_markup(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_candidate_result = ("archive_org", 3)
     callback_query = FakeCallbackQuery(data="play:0", user_id=111)
 
@@ -1404,9 +1460,9 @@ async def test_play_candidate_success_answers_and_clears_markup(
 
 
 async def test_play_candidate_expired_token_answers_alert(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_candidate_exception = InvalidSearchIndexError(
         "Esse botão expirou. Use /find de novo."
     )
@@ -1419,9 +1475,9 @@ async def test_play_candidate_expired_token_answers_alert(
 
 
 async def test_play_candidate_invalid_source_answers_alert(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_candidate_exception = InvalidSourceError("fonte inválida")
     callback_query = FakeCallbackQuery(data="play:0", user_id=111)
 
@@ -1432,9 +1488,9 @@ async def test_play_candidate_invalid_source_answers_alert(
 
 
 async def test_play_candidate_queue_full_answers_alert(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     addon_service.pick_candidate_exception = QueueFullError("fila cheia")
     callback_query = FakeCallbackQuery(data="play:0", user_id=111)
 
@@ -1445,9 +1501,9 @@ async def test_play_candidate_queue_full_answers_alert(
 
 
 async def test_play_candidate_unauthorized_falls_back_to_denial(
-    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings, _FakeTMDBService],
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
-    client, addon_service, _, _ = addon_wired_client
+    client, addon_service, _ = addon_wired_client
     callback_query = FakeCallbackQuery(data="play:0", user_id=999)
 
     handled = await dispatch_callback(client, callback_query)

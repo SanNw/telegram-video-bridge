@@ -8,6 +8,7 @@ from app.addon_system.base import SearchResult, StreamCandidate
 from app.bot.formatting import (
     format_now_playing,
     format_queue,
+    format_search_results,
     format_status,
     format_stream_buttons,
     format_timedelta,
@@ -129,6 +130,7 @@ def _search_result(year: int | None = 1968) -> SearchResult:
 def test_format_tmdb_rich_message_includes_all_fields() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="Um grupo se refugia numa casa cercada por mortos-vivos.",
         poster_url="https://image.tmdb.org/t/p/w500/poster.jpg",
         vote_average=7.8,
@@ -149,6 +151,7 @@ def test_format_tmdb_rich_message_includes_all_fields() -> None:
 def test_format_tmdb_rich_message_omits_photo_when_no_poster() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -167,6 +170,7 @@ def test_format_tmdb_rich_message_omits_photo_when_no_poster() -> None:
 def test_format_tmdb_rich_message_escapes_html_in_overview() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview="<b>Perigo</b> & \"terror\"",
         poster_url=None,
         vote_average=None,
@@ -183,6 +187,7 @@ def test_format_tmdb_rich_message_escapes_html_in_overview() -> None:
 def test_format_tmdb_rich_message_includes_backdrop_slideshow() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -206,6 +211,7 @@ def test_format_tmdb_rich_message_includes_backdrop_slideshow() -> None:
 def test_format_tmdb_rich_message_omits_backdrop_slideshow_when_empty() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -221,6 +227,7 @@ def test_format_tmdb_rich_message_omits_backdrop_slideshow_when_empty() -> None:
 def test_format_tmdb_rich_message_includes_cast_slideshow_and_names() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -245,6 +252,7 @@ def test_format_tmdb_rich_message_includes_cast_slideshow_and_names() -> None:
 def test_format_tmdb_rich_message_cast_names_without_photos_skip_slideshow() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -261,6 +269,7 @@ def test_format_tmdb_rich_message_cast_names_without_photos_skip_slideshow() -> 
 def test_format_tmdb_rich_message_escapes_html_in_cast_name() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
+        original_title="Night of the Living Dead",
         overview=None,
         poster_url=None,
         vote_average=None,
@@ -272,6 +281,25 @@ def test_format_tmdb_rich_message_escapes_html_in_cast_name() -> None:
     html = format_tmdb_rich_message(_search_result(), metadata)
     assert "<b>Ator</b>" not in html
     assert "&lt;b&gt;Ator&lt;/b&gt;" in html
+
+
+def _search_result_titled(title: str) -> SearchResult:
+    return SearchResult(media_id="abc", title=title, year=1968, addon_name="archive_org")
+
+
+def test_format_search_results_includes_dubbed_flag() -> None:
+    text = format_search_results([_search_result_titled("Filme Dublado")])
+    assert "🇧🇷 Filme Dublado" in text
+
+
+def test_format_search_results_includes_subtitled_flag() -> None:
+    text = format_search_results([_search_result_titled("Movie Legendado")])
+    assert "🇺🇸 Movie Legendado" in text
+
+
+def test_format_search_results_omits_flag_when_no_marker() -> None:
+    text = format_search_results([_search_result_titled("Movie")])
+    assert "1. Movie" in text
 
 
 def test_format_stream_buttons_single_candidate_without_quality() -> None:
@@ -299,3 +327,29 @@ def test_format_stream_buttons_multiple_candidates_with_quality() -> None:
     assert markup.inline_keyboard[0][0].text == "▶️ archive_org"
     assert markup.inline_keyboard[1][0].text == "▶️ archive_org (1080p)"
     assert markup.inline_keyboard[1][0].callback_data == "play:1"
+
+
+def test_format_stream_buttons_includes_language_flag_from_title() -> None:
+    candidates = [
+        (
+            "0",
+            _search_result(),
+            StreamCandidate(url="https://a.example/1.mp4", title="Filme Dublado"),
+        ),
+    ]
+    markup = format_stream_buttons(candidates)
+    assert markup.inline_keyboard[0][0].text == "▶️ 🇧🇷 archive_org"
+
+
+def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
+    candidates = [
+        (
+            "0",
+            _search_result(),
+            StreamCandidate(
+                url="https://a.example/1.mp4", title="a", quality="1080p Legendado"
+            ),
+        ),
+    ]
+    markup = format_stream_buttons(candidates)
+    assert markup.inline_keyboard[0][0].text == "▶️ 🇺🇸 archive_org (1080p Legendado)"

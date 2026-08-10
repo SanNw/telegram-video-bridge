@@ -122,6 +122,18 @@ class Settings(BaseSettings):
         default=10.0, gt=0, description="Timeout de rede por requisição ao TMDB."
     )
 
+    # --- Bot (BotFather) ---
+    # `None` mantém o comportamento atual: /find e /pick rodam no client de
+    # sessão (SESSION_STRING), sem botões inline (o Telegram descarta
+    # `reply_markup` em mensagens enviadas por conta de usuário). Setado, um
+    # segundo Client autenticado via bot_token assume /find e /pick e envia
+    # botões inline reais como forma primária de escolha. Ver app/main.py e
+    # app/bot/client.py.
+    bot_token: SecretStr | None = Field(
+        default=None,
+        description="Token do bot (BotFather) para enviar /find e /pick com botões inline. Vazio mantém o fallback de texto puro no client de sessão.",
+    )
+
     # --- qBittorrent / Torrents ---
     # Suporte a streams que só trazem infoHash/magnet (ex.: Torrentio sem um
     # serviço de debrid configurado) — resolvidos via a Web API do qBittorrent
@@ -189,6 +201,8 @@ class Settings(BaseSettings):
         data["session_string"] = "***MASKED***"
         if self.tmdb_api_key is not None:
             data["tmdb_api_key"] = "***MASKED***"
+        if self.bot_token is not None:
+            data["bot_token"] = "***MASKED***"
         data["qbittorrent_password"] = "***MASKED***"
         return data
 

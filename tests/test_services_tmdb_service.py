@@ -75,6 +75,7 @@ async def test_enrich_builds_metadata_from_details(enabled_service: TMDBService)
     enabled_service._client.search_movie.return_value = [{"id": 27205}]  # type: ignore[attr-defined]
     enabled_service._client.get_movie_details.return_value = {  # type: ignore[attr-defined]
         "title": "Inception",
+        "original_title": "Inception",
         "overview": "A thief who steals corporate secrets.",
         "poster_path": "/abc123.jpg",
         "vote_average": 8.4,
@@ -86,6 +87,7 @@ async def test_enrich_builds_metadata_from_details(enabled_service: TMDBService)
 
     assert metadata is not None
     assert metadata.title == "Inception"
+    assert metadata.original_title == "Inception"
     assert metadata.overview == "A thief who steals corporate secrets."
     assert metadata.poster_url == "https://image.tmdb.org/t/p/w500/abc123.jpg"
     assert metadata.vote_average == 8.4
@@ -105,11 +107,28 @@ async def test_enrich_falls_back_to_query_title_when_missing(
 
     assert metadata is not None
     assert metadata.title == "Inception"
+    assert metadata.original_title is None
     assert metadata.overview is None
     assert metadata.poster_url is None
     assert metadata.vote_average is None
     assert metadata.genres == []
     assert metadata.release_date is None
+
+
+async def test_enrich_original_title_none_when_same_as_translated(
+    enabled_service: TMDBService,
+) -> None:
+    """`original_title` vazio ou ausente na resposta do TMDB vira `None` (nunca string vazia)."""
+    enabled_service._client.search_movie.return_value = [{"id": 27205}]  # type: ignore[attr-defined]
+    enabled_service._client.get_movie_details.return_value = {  # type: ignore[attr-defined]
+        "title": "Homem-Aranha",
+        "original_title": "",
+    }
+
+    metadata = await enabled_service.enrich("Homem-Aranha", None)
+
+    assert metadata is not None
+    assert metadata.original_title is None
 
 
 async def test_enrich_ignores_genres_without_name_field(enabled_service: TMDBService) -> None:

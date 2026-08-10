@@ -13,6 +13,8 @@ import signal
 import sys
 from typing import Any
 
+from pyrogram import Client
+
 from app.bot.client import build_bot
 from app.config.settings import get_settings
 from app.services.addon_service import AddonService
@@ -42,11 +44,23 @@ async def _run() -> None:
     service = PlaybackService(settings)
     torrent_service = TorrentService(settings)
     service.set_source_released_callback(torrent_service.release)
-    addon_service = AddonService(settings, service, torrent_service)
     tmdb_service = TMDBService(settings)
-    build_bot(service, addon_service, settings, tmdb_service)
+    addon_service = AddonService(settings, service, torrent_service, tmdb_service)
+
+    bot_client: Client | None = None
+    if settings.bot_token is not None:
+        bot_client = Client(
+            name="telegram-video-bridge-botapi",
+            api_id=settings.api_id,
+            api_hash=settings.api_hash.get_secret_value(),
+            bot_token=settings.bot_token.get_secret_value(),
+            in_memory=True,
+        )
+    build_bot(service, addon_service, settings, tmdb_service, bot_client)
 
     await service.start()
+    if bot_client is not None:
+        await bot_client.start()
     await addon_service.start()
     _logger.info("Telegram Video Bridge em execução.")
 
@@ -62,6 +76,8 @@ async def _run() -> None:
     finally:
         _logger.info("Encerrando...")
         await service.shutdown()
+        if bot_client is not None:
+            await bot_client.stop()
         await tmdb_service.close()
         await torrent_service.close()
 

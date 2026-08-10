@@ -147,8 +147,8 @@ para usar este comando." `/start`, `/help`, `/ping` e `/version` são públicos
 | `/status` | whitelist | Estado do streaming, da chamada, da fila e sinal de degradação. |
 | `/nowplaying` | whitelist | Item em reprodução, quem pediu e há quanto tempo toca. "Nada está tocando" se ociosa. |
 | `/uptime` | whitelist | Há quanto tempo o processo está em execução. |
-| `/find <busca>` | whitelist | Busca em todos os addons habilitados; lista resultados numerados. Sem argumento: uso. |
-| `/pick <número>` | whitelist | Resolve o resultado `<número>` da última `/find` e enfileira. Posição inválida, sem fonte reproduzível, fonte inválida ou fila cheia: motivo. |
+| `/find <busca>` | whitelist | Busca em todos os addons habilitados, filtra por relevância ao título (TMDB, com fallback fuzzy) e lista resultados numerados. Com `BOT_TOKEN` configurado, também manda botões inline — um por addon com stream resolvido — como forma primária de escolher. Sem argumento: uso. |
+| `/pick <número>` | whitelist | Fallback secundário aos botões (ou único caminho sem `BOT_TOKEN`): resolve o resultado `<número>` da última `/find` e enfileira. Posição inválida, sem fonte reproduzível, fonte inválida ou fila cheia: motivo. |
 | `/addons` | whitelist | Lista addons instalados (habilitado/desabilitado, versão). |
 | `/addon info <nome>` | whitelist | Versão, descrição, estado e healthcheck do addon. Nome ausente ou addon inexistente: motivo. |
 | `/addon <enable\|disable\|reload\|uninstall> <nome>` | `OWNER_USER_ID` | Gerencia um addon (ver "Sistema de addons"). Restrito ao operador mesmo com `AUTHORIZED_USER_IDS=all` — quem não é owner recebe recusa. Nome ausente ou addon inexistente: motivo. |
@@ -178,22 +178,40 @@ RTSP não precisam desse passo — funcionam direto: `/play https://...`.
 ## Sistema de addons
 
 Um addon resolve **fontes de mídia**: recebe uma busca em texto livre
-(`/find`) e devolve candidatos que, uma vez escolhidos (`/pick`), viram a
-`<fonte>` de um `/play` comum — mesma fila, mesmo `PlaybackService`, mesmas
-regras de sanitização. Um addon não sabe nada sobre `streaming/`, `telegram/`
-ou FFmpeg; só fala `search` → `get_streams` → uma URL HTTP(S)/HLS/RTMP/RTSP.
+(`/find`) e devolve candidatos que, uma vez escolhidos (via botão inline ou,
+como fallback, `/pick`), viram a `<fonte>` de um `/play` comum — mesma fila,
+mesmo `PlaybackService`, mesmas regras de sanitização. Um addon não sabe nada
+sobre `streaming/`, `telegram/` ou FFmpeg; só fala `search` → `get_streams` →
+uma URL HTTP(S)/HLS/RTMP/RTSP.
+
+Antes de listar os resultados, `AddonService.find()` filtra o que os addons
+devolveram pela relevância ao título buscado: se `TMDBService` está
+habilitado (`TMDB_API_KEY` setado), confirma o filme canônico e descarta
+resultados cujo título não bate (nem com o título traduzido, nem com o
+original); sem TMDB, ou se o TMDB não conhece o título (conteúdo obscuro),
+cai para uma comparação fuzzy direta contra a busca do usuário
+(`app/utils/title_matching.py`, `rapidfuzz`). Uma rede de segurança garante
+que o filtro nunca esconda tudo: se ele zerar a lista, o fallback fuzzy
+tenta de novo sobre os resultados brutos; se isso também zerar, a lista
+bruta é devolvida sem filtro.
 
 ### Arquitetura
 
 ```
 /find <busca>  ──▶  AddonService.find()  ──▶  AddonManager.search()
-                                                    │
-                                    asyncio.gather em paralelo,
-                                    timeout + isolamento de falha
-                                    por addon, resultado cacheado (TTL)
-                                                    ▼
-                                        addon.search() de cada
-                                        addon habilitado
+                            │                          │
+                            │           asyncio.gather em paralelo,
+                            │           timeout + isolamento de falha
+                            │           por addon, resultado cacheado (TTL)
+                            │                          ▼
+                            │              addon.search() de cada
+                            │              addon habilitado
+                            ▼
+                    TMDBService.enrich(busca) confirma o filme canônico;
+                    resultados filtrados por título (match TMDB, fallback
+                    fuzzy) — rede de segurança nunca esconde tudo (ver
+                    Sistema de addons). Lista final numerada + botões
+                    inline (com BOT_TOKEN) viram AddonService._last_results.
 
 /pick <número> ──▶  AddonService.pick()  ──▶  AddonManager.get_streams()
                                                     │
@@ -364,6 +382,9 @@ cp .env.example .env
 | `ADDONS_CONFIG_PATH` | não | pasta com config própria de cada addon (padrão `config/addons/`) |
 | `ADDON_SEARCH_TIMEOUT_SECONDS`, `ADDON_STREAMS_TIMEOUT_SECONDS` | não | timeout por addon em `/find`/`/pick` (padrão 10s cada) |
 | `ADDON_SEARCH_CACHE_TTL_SECONDS` | não | TTL do cache de resultados de `/find` (padrão 300s) |
+| `TMDB_API_KEY` | não | ativa metadados (pôster/sinopse/nota) e o filtro por título em `/find`; vazio desativa a integração (filtro cai para fuzzy-vs-busca) |
+| `TMDB_LANGUAGE`, `TMDB_REQUEST_TIMEOUT_SECONDS` | não | idioma dos metadados (padrão `pt-BR`) e timeout da requisição TMDB |
+| `BOT_TOKEN` | não | token do bot (BotFather) para `/find`/`/pick` com botões inline reais como forma primária de escolha; vazio mantém o fallback de texto puro no client de sessão (ver [Sistema de addons](#sistema-de-addons)) |
 | `QBITTORRENT_HOST`, `QBITTORRENT_PORT` | não | endereço da Web API do qBittorrent (padrão `localhost:8080`) |
 | `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD` | não | credenciais da Web API do qBittorrent (padrão `admin`/vazio) |
 | `QBITTORRENT_CATEGORY` | não | categoria aplicada aos torrents adicionados pelo bot, se definida |
@@ -373,7 +394,7 @@ cp .env.example .env
 | `REMOVE_TORRENT_AFTER_PLAY` | não | remove o torrent do qBittorrent ao fim da reprodução (padrão `false`, mantém em seed) |
 
 Nunca versione `.env` (já está no `.gitignore`). `API_HASH`,
-`SESSION_STRING`, `TMDB_API_KEY` e `QBITTORRENT_PASSWORD` são mascarados em
+`SESSION_STRING`, `TMDB_API_KEY`, `BOT_TOKEN` e `QBITTORRENT_PASSWORD` são mascarados em
 todo log (`***MASKED***`) e nunca aparecem em texto plano em nenhum arquivo
 de log.
 
@@ -432,7 +453,7 @@ tentativas, 1s de jitter.
 ## Segurança
 
 - Nenhuma credencial hardcoded — tudo via `.env`/`Settings`.
-- `SESSION_STRING`/`API_HASH`/`TMDB_API_KEY`/`QBITTORRENT_PASSWORD`
+- `SESSION_STRING`/`API_HASH`/`TMDB_API_KEY`/`BOT_TOKEN`/`QBITTORRENT_PASSWORD`
   mascarados em logs.
 - Entrada de `/play` validada antes de chegar ao FFmpeg
   (`app/utils/sanitize.py`): rejeita entradas que comecem com `-` (evita

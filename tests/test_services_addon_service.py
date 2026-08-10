@@ -20,6 +20,7 @@ from app.services.exceptions import (
     NoStreamsAvailableError,
     TorrentTimeoutError,
 )
+from app.services.tmdb_service import TMDBMetadata
 
 
 class _FakeManager:
@@ -87,6 +88,21 @@ class _FakeTorrentService:
         return self.resolve_result
 
 
+class _FakeTMDBService:
+    def __init__(self, *, enabled: bool = False) -> None:
+        self._enabled = enabled
+        self.enrich_calls: list[tuple[str, int | None]] = []
+        self.enrich_result: TMDBMetadata | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    async def enrich(self, title: str, year: int | None) -> TMDBMetadata | None:
+        self.enrich_calls.append((title, year))
+        return self.enrich_result
+
+
 @pytest.fixture
 def fake_manager(monkeypatch: pytest.MonkeyPatch) -> _FakeManager:
     manager = _FakeManager()
@@ -107,13 +123,19 @@ def torrent_service() -> _FakeTorrentService:
 
 
 @pytest.fixture
+def tmdb_service() -> _FakeTMDBService:
+    return _FakeTMDBService(enabled=False)
+
+
+@pytest.fixture
 def service(
     fake_manager: _FakeManager,
     playback: MagicMock,
     torrent_service: _FakeTorrentService,
+    tmdb_service: _FakeTMDBService,
     settings: object,
 ) -> AddonService:
-    return AddonService(settings, playback, torrent_service)  # type: ignore[arg-type]
+    return AddonService(settings, playback, torrent_service, tmdb_service)  # type: ignore[arg-type]
 
 
 async def test_start_discovers_addons(service: AddonService, fake_manager: _FakeManager) -> None:
@@ -152,6 +174,139 @@ async def test_find_stores_results_for_later_pick(
     ]
     results = await service.find("movie")
     assert results == fake_manager.search_results
+
+
+# --- filtro TMDB-first / fuzzy-fallback (ver `AddonService._filter_results`) ---
+
+
+def _metadata(title: str, original_title: str | None = None) -> TMDBMetadata:
+    return TMDBMetadata(
+        title=title,
+        original_title=original_title,
+        overview=None,
+        poster_url=None,
+        vote_average=None,
+        genres=[],
+        release_date=None,
+        cast=[],
+        backdrop_urls=[],
+    )
+
+
+async def test_find_filters_by_tmdb_title_when_enabled_and_matched(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    tmdb_service._enabled = True
+    tmdb_service.enrich_result = _metadata("O Espetacular Homem-Aranha")
+    fake_manager.search_results = [
+        SearchResult(
+            media_id="1",
+            title="O Espetacular Homem-Aranha (2008) 1080p Dublado",
+            addon_name="archive_org",
+        ),
+        SearchResult(
+            media_id="2", title="Doblajes de Clásicos de la Diversión", addon_name="archive_org"
+        ),
+    ]
+
+    results = await service.find("homem aranha")
+
+    assert [r.media_id for r in results] == ["1"]
+    assert tmdb_service.enrich_calls == [("homem aranha", None)]
+
+
+async def test_find_falls_back_to_fuzzy_when_tmdb_disabled(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    assert tmdb_service.enabled is False
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Homem Aranha Dublado", addon_name="archive_org"),
+        SearchResult(
+            media_id="2", title="Doblajes de Clásicos de la Diversión", addon_name="archive_org"
+        ),
+    ]
+
+    results = await service.find("homem aranha")
+
+    assert [r.media_id for r in results] == ["1"]
+    assert tmdb_service.enrich_calls == []
+
+
+async def test_find_falls_back_to_fuzzy_when_tmdb_finds_nothing(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    tmdb_service._enabled = True
+    tmdb_service.enrich_result = None
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Homem Aranha Dublado", addon_name="archive_org"),
+        SearchResult(
+            media_id="2", title="Doblajes de Clásicos de la Diversión", addon_name="archive_org"
+        ),
+    ]
+
+    results = await service.find("homem aranha")
+
+    assert [r.media_id for r in results] == ["1"]
+
+
+async def test_find_tmdb_zero_matches_falls_back_to_fuzzy_vs_query(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    """TMDB confirma o filme, mas nenhum resultado de addon bate com o título
+    do TMDB — cai pro fuzzy-vs-query, que ainda pode achar algo relevante."""
+    tmdb_service._enabled = True
+    tmdb_service.enrich_result = _metadata("Totalmente Diferente")
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Homem-Aranha 2 1080p", addon_name="archive_org"),
+    ]
+
+    results = await service.find("homem aranha")
+
+    assert [r.media_id for r in results] == ["1"]
+
+
+async def test_find_safety_net_returns_raw_results_when_all_filters_empty(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    tmdb_service._enabled = True
+    tmdb_service.enrich_result = _metadata("Totalmente Diferente")
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Nada a ver com nada", addon_name="archive_org"),
+    ]
+
+    results = await service.find("outra busca qualquer")
+
+    assert results == fake_manager.search_results
+
+
+async def test_find_empty_raw_results_short_circuits(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    tmdb_service._enabled = True
+    fake_manager.search_results = []
+
+    results = await service.find("nada")
+
+    assert results == []
+    assert tmdb_service.enrich_calls == [("nada", None)]
+
+
+async def test_last_metadata_reflects_last_find(
+    service: AddonService, fake_manager: _FakeManager, tmdb_service: _FakeTMDBService
+) -> None:
+    assert service.last_metadata() is None
+
+    tmdb_service._enabled = True
+    tmdb_service.enrich_result = _metadata("Movie")
+    fake_manager.search_results = [
+        SearchResult(media_id="1", title="Movie", addon_name="archive_org")
+    ]
+    await service.find("movie")
+    assert service.last_metadata() == tmdb_service.enrich_result
+
+    tmdb_service.enrich_result = None
+    await service.find("movie again")
+    assert service.last_metadata() is None
 
 
 async def test_pick_without_prior_find_raises(service: AddonService) -> None:

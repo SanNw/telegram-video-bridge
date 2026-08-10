@@ -19,19 +19,30 @@ responde com o motivo também para `TorrentTimeoutError`/
 `TorrentResolutionError` — falhas específicas de resolver um torrent via
 qBittorrent.
 
-Resposta: `/find` manda uma única mensagem. Quando o TMDB está configurado
-(`TMDBService.enabled`) e acha metadados para o primeiro resultado, a
-resposta é uma Rich Message (`send_rich_message`) com pôster/sinopse/nota —
-substituindo a lista de texto puro, não somando a ela. Essa Rich Message vem
-com um botão inline por addon que resolveu um stream reproduzível dentro do
-limite de 4GB do Telegram para o resultado
-(`AddonService.resolve_top_candidates`); clicar enfileira direto via
-`pick_candidate`, sem precisar de `/pick <número>`. Quando o TMDB está
-desabilitado ou não acha o filme, cai no fallback de sempre: lista de texto
-numerada + instrução de `/pick <número>`. Comandos sem resultado nenhum
-(`find` sem match) e demais handlers (`/addons`, `/addon`, `/pick`) sempre
-respondem com uma única mensagem de texto confirmando a ação, listando
-resultados, ou explicando o erro.
+Dois registradores, dois clients possíveis:
+
+- `register_management`: `/addons`, `/addon` — sempre no client de sessão
+  (`SESSION_STRING`), nunca precisou de botão.
+- `register_search`: `/find`, `/pick`, e o callback `play:` — chamado com o
+  client escolhido por `app/bot/client.py` (o de bot, `BOT_TOKEN`, se
+  configurado; senão o de sessão, mesmo comportamento de sempre). Nunca
+  registrado nos dois ao mesmo tempo: duplicaria o processamento de cada
+  `/pick`/clique de botão (a conta de sessão recebe toda mensagem do grupo;
+  um bot recebe comandos mesmo com privacy mode padrão).
+
+Resposta de `/find`: quando o TMDB está configurado (`TMDBService.enabled`,
+verificado dentro de `AddonService.find`) e acha metadados, uma Rich Message
+(`send_rich_message`, pôster/sinopse/nota) é enviada ANTES da lista, como
+destaque visual. Só quando `register_search` roda no client de bot
+(`buttons_enabled=True`) ela carrega `reply_markup` com um botão por addon
+resolvido (via `resolve_top_candidates`/`format_stream_buttons`) — clicar
+enfileira direto, sem precisar de `/pick`. O Telegram descarta
+silenciosamente `reply_markup` em mensagens enviadas por uma conta de usuário
+(`SESSION_STRING`), então no client de sessão a Rich Message sai sem botão.
+Em ambos os casos a lista de texto numerada + instrução de `/pick <número>`
+sempre segue depois — os botões são a via primária de escolha, `/pick`
+continua disponível como fallback secundário (útil se os botões expirarem,
+sumirem da tela, ou o TMDB não confirmar o filme).
 """
 
 from __future__ import annotations
@@ -57,7 +68,6 @@ from app.services.exceptions import (
     TorrentResolutionError,
     TorrentTimeoutError,
 )
-from app.services.tmdb_service import TMDBService
 from app.utils.sanitize import InvalidSourceError
 
 _ADDON_ACTIONS = {"info", "enable", "disable", "reload", "uninstall"}
@@ -75,20 +85,13 @@ def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
 play_callback_filter = filters.create(_is_play_callback, "PlayCallbackFilter")
 
 
-def register(
+def register_management(
     app: Client,
     service: AddonService,
     authorized: filters.Filter,
     owner: filters.Filter,
-    tmdb_service: TMDBService,
 ) -> None:
-    """Registra os comandos de addons em `app`.
-
-    `authorized` controla `/addons`, `/find`, `/pick` e `/addon info`;
-    `owner` controla as ações de gerenciamento de `/addon` (ver docstring do
-    módulo). `tmdb_service` enriquece `/find` com uma Rich Message quando
-    habilitado (ver docstring do módulo).
-    """
+    """Registra `/addons` e `/addon` (gerenciamento) — sempre no client de sessão."""
 
     @app.on_message(filters.command("addons") & authorized)  # type: ignore[misc]
     async def _addons(_: Client, message: Message) -> None:
@@ -122,6 +125,20 @@ def register(
         except AddonError as exc:
             await message.reply_text(str(exc))
 
+
+def register_search(
+    app: Client,
+    service: AddonService,
+    authorized: filters.Filter,
+    buttons_enabled: bool,
+) -> None:
+    """Registra `/find`, `/pick` e o callback `play:` em `app`.
+
+    `buttons_enabled` indica se `app` é o client de bot (`BOT_TOKEN`) — só
+    nesse caso a Rich Message de `/find` carrega botões inline (ver
+    docstring do módulo).
+    """
+
     @app.on_message(filters.command("find") & authorized)  # type: ignore[misc]
     async def _find(client: Client, message: Message) -> None:
         if message.command is None or message.text is None or len(message.command) < 2:
@@ -135,30 +152,20 @@ def register(
             return
 
         chat = message.chat
-        metadata = None
+        metadata = service.last_metadata()
         first = results[0]
-        if tmdb_service.enabled and chat is not None and chat.id is not None:
-            # `query` (termo digitado pelo usuário) é um termo de busca muito
-            # mais confiável pro TMDB que `first.title` (título cru retornado
-            # por um addon — ex.: "POEIRA NA POMBA - Conheça os personagens"
-            # para a busca "homem de ferro").
-            metadata = await tmdb_service.enrich(query, first.year)
 
         if metadata is not None and chat is not None and chat.id is not None:
-            # TMDB confirmou o filme: a Rich Message (sinopse/pôster/nota) +
-            # os botões dos melhores candidatos substituem a lista de texto
-            # puro — não faz sentido mostrar as duas.
-            candidates = await service.resolve_top_candidates()
-            reply_markup = format_stream_buttons(candidates) if candidates else None
+            reply_markup = None
+            if buttons_enabled:
+                candidates = await service.resolve_top_candidates()
+                reply_markup = format_stream_buttons(candidates) if candidates else None
             await client.send_rich_message(
                 chat.id,
                 InputRichMessage(html=format_tmdb_rich_message(first, metadata)),
                 reply_markup=reply_markup,
             )
-        else:
-            # TMDB desabilitado ou não achou o filme: cai no fallback de
-            # sempre — lista de texto puro + `/pick <número>`.
-            await message.reply_text(format_search_results(results))
+        await message.reply_text(format_search_results(results))
         # O _unauthorized (group=1) também casa filters.command("find"); sem
         # stop_propagation ele dispara após este handler e responde "Você não
         # tem permissão" mesmo quando o usuário está autorizado.
@@ -192,11 +199,13 @@ def register(
     async def _pick(_: Client, message: Message) -> None:
         if message.command is None or len(message.command) < 2:
             await message.reply_text("Uso: `/pick <número>` (depois de um /find)")
+            message.stop_propagation()  # type: ignore[no-untyped-call]
             return
         try:
             index = int(message.command[1])
         except ValueError:
             await message.reply_text("Posição inválida: precisa ser um número.")
+            message.stop_propagation()  # type: ignore[no-untyped-call]
             return
         user_id = message.from_user.id if message.from_user else 0
         try:
@@ -211,6 +220,10 @@ def register(
             await message.reply_text(f"Falha ao baixar torrent: {exc}")
         else:
             await message.reply_text(f"Adicionado à fila na posição {position}.")
+        # Mesmo motivo do stop_propagation em /find: sem isso o _unauthorized
+        # (group=1) dispara depois e responde "sem permissão" mesmo quando o
+        # /pick já foi processado com sucesso (ou falhou por um motivo legítimo).
+        message.stop_propagation()  # type: ignore[no-untyped-call]
 
 
 async def _run_addon_action(

@@ -111,6 +111,24 @@ def test_tmdb_defaults(make_settings: Callable[..., Settings]) -> None:
     assert settings.tmdb_request_timeout_seconds == 10.0
 
 
+def test_bot_token_defaults_to_none(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings()
+    assert settings.bot_token is None
+
+
+def test_masked_dict_masks_bot_token_when_set(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings(bot_token="super-secret-bot-token")
+    masked = settings.masked_dict()
+    assert "super-secret-bot-token" not in str(masked)
+    assert masked["bot_token"] == "***MASKED***"
+
+
+def test_masked_dict_omits_bot_token_when_unset(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings()
+    masked = settings.masked_dict()
+    assert masked["bot_token"] is None
+
+
 def test_secret_str_repr_does_not_leak_value(make_settings: Callable[..., Settings]) -> None:
     settings = make_settings(api_hash="super-secret-hash")
     assert "super-secret-hash" not in repr(settings.api_hash)

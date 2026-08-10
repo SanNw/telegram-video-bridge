@@ -3,6 +3,11 @@
 Ponto único que `bot/` toca para tudo relacionado a addons — nunca importa
 `app.addon_system` diretamente, mesma regra de camadas que `PlaybackService`
 já segue para `player/streaming/telegram`.
+
+`find()` também filtra os resultados brutos dos addons por relevância ao
+título pesquisado (TMDB primeiro, fuzzy match como fallback — ver
+`_filter_results`), uma junção dos domínios addon+TMDB que não cabe em
+nenhum dos dois isoladamente. Por isso o construtor depende de `TMDBService`.
 """
 
 from __future__ import annotations
@@ -16,8 +21,10 @@ from app.services.exceptions import (
     TorrentTimeoutError,
 )
 from app.services.playback_service import PlaybackService
+from app.services.tmdb_service import TMDBMetadata, TMDBService
 from app.services.torrent_service import TorrentService
 from app.utils.logging import get_logger
+from app.utils.title_matching import matches_any
 
 _logger = get_logger("services")
 
@@ -26,6 +33,16 @@ _logger = get_logger("services")
 # — porque outros addons podem devolver `size_bytes` sem aplicar esse corte.
 # Tamanho desconhecido (`None`) não é descartado: não dá pra confirmar violação.
 _MAX_STREAM_SIZE_BYTES = 4 * 1024**3
+
+# Score mínimo (rapidfuzz.fuzz.token_set_ratio, 0-100) para um resultado de
+# addon ser considerado o mesmo filme que o título confirmado pelo TMDB.
+# Título "limpo" do TMDB vs. título de addon (que pode ter ruído tipo
+# "1080p Dublado" — token_set_ratio ignora isso bem) permite um corte mais
+# rígido do que o fallback abaixo.
+_TMDB_MATCH_THRESHOLD = 65.0
+# Score mínimo contra a query crua do usuário (sem normalização do TMDB) —
+# mais tolerante, usado só quando o TMDB não confirma o filme.
+_FUZZY_FALLBACK_THRESHOLD = 55.0
 
 
 class AddonService:
@@ -36,11 +53,14 @@ class AddonService:
         settings: Settings,
         playback_service: PlaybackService,
         torrent_service: TorrentService,
+        tmdb_service: TMDBService,
     ) -> None:
         self._manager = AddonManager(settings)
         self._playback = playback_service
         self._torrent = torrent_service
+        self._tmdb = tmdb_service
         self._last_results: list[SearchResult] = []
+        self._last_metadata: TMDBMetadata | None = None
         self._candidates: dict[str, tuple[SearchResult, StreamCandidate]] = {}
 
     async def start(self) -> None:
@@ -76,11 +96,50 @@ class AddonService:
         await self._manager.uninstall(name)
 
     async def find(self, query: str) -> list[SearchResult]:
-        """Busca `query` em todos os addons habilitados; guarda os resultados para `/pick`."""
-        results = await self._manager.search(query)
-        self._last_results = results
+        """Busca `query` em todos os addons habilitados; guarda os resultados para `/pick`.
+
+        Filtra os resultados brutos por relevância ao filme pesquisado antes
+        de guardá-los — ver `_filter_results`. `last_metadata()` expõe o
+        metadata do TMDB já buscado aqui, para `bot/` não repetir a chamada.
+        """
+        raw_results = await self._manager.search(query)
+        metadata = await self._tmdb.enrich(query, None) if self._tmdb.enabled else None
+        filtered = self._filter_results(raw_results, query, metadata)
+        self._last_results = filtered
+        self._last_metadata = metadata
         self._candidates = {}
-        return results
+        return filtered
+
+    def last_metadata(self) -> TMDBMetadata | None:
+        """Metadata do TMDB (se houver) obtido na última chamada a `find()`."""
+        return self._last_metadata
+
+    @staticmethod
+    def _filter_results(
+        raw_results: list[SearchResult], query: str, metadata: TMDBMetadata | None
+    ) -> list[SearchResult]:
+        """Filtra `raw_results` por relevância: TMDB primeiro, fuzzy match como fallback.
+
+        Rede de segurança: nunca esconde resultados que só um filtro grosseiro
+        demais reprovaria — se o filtro TMDB zerar a lista, cai para o fuzzy
+        fallback sobre `raw_results`; se isso também zerar, devolve
+        `raw_results` sem filtrar.
+        """
+        if not raw_results:
+            return raw_results
+
+        if metadata is not None:
+            references = [metadata.title, metadata.original_title]
+            filtered = [
+                r for r in raw_results if matches_any(r.title, references, _TMDB_MATCH_THRESHOLD)
+            ]
+            if filtered:
+                return filtered
+
+        fuzzy_filtered = [
+            r for r in raw_results if matches_any(r.title, [query], _FUZZY_FALLBACK_THRESHOLD)
+        ]
+        return fuzzy_filtered or raw_results
 
     async def pick(self, index: int, requested_by: int) -> int:
         """Resolve o resultado `index` (1-indexado) da última busca e enfileira para reprodução.

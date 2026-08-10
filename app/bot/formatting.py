@@ -11,6 +11,7 @@ from app.addon_system.manager import AddonInfo
 from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
 from app.services.tmdb_service import TMDBMetadata
+from app.utils.language_detection import detect_language_flag
 
 
 def format_status(status: ServiceStatus) -> str:
@@ -103,7 +104,9 @@ def format_search_results(results: list[SearchResult]) -> str:
     lines = ["*Resultados*"]
     for position, result in enumerate(results, start=1):
         year_suffix = f" ({result.year})" if result.year else ""
-        lines.append(f"{position}. {result.title}{year_suffix} — _{result.addon_name}_")
+        flag = detect_language_flag(result.title)
+        flag_prefix = f"{flag} " if flag else ""
+        lines.append(f"{position}. {flag_prefix}{result.title}{year_suffix} — _{result.addon_name}_")
     lines.append("\nUse `/pick <número>` para adicionar à fila.")
     return "\n".join(lines)
 
@@ -168,7 +171,7 @@ def format_stream_buttons(
         [
             [
                 InlineKeyboardButton(
-                    text=_format_stream_button_label(result.addon_name, candidate.quality),
+                    text=_format_stream_button_label(result.addon_name, candidate),
                     callback_data=f"play:{token}",
                 )
             ]
@@ -177,9 +180,11 @@ def format_stream_buttons(
     )
 
 
-def _format_stream_button_label(addon_name: str, quality: str | None) -> str:
-    quality_suffix = f" ({quality})" if quality else ""
-    return f"▶️ {addon_name}{quality_suffix}"
+def _format_stream_button_label(addon_name: str, candidate: StreamCandidate) -> str:
+    quality_suffix = f" ({candidate.quality})" if candidate.quality else ""
+    flag = detect_language_flag(f"{candidate.title} {candidate.quality or ''}")
+    flag_prefix = f"{flag} " if flag else ""
+    return f"▶️ {flag_prefix}{addon_name}{quality_suffix}"
 
 
 def _escape_html(text: str) -> str:

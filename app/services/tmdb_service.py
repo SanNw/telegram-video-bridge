@@ -33,6 +33,7 @@ class TMDBMetadata:
     """Metadados de um filme, prontos para exibição numa Rich Message."""
 
     title: str
+    original_title: str | None
     overview: str | None
     poster_url: str | None
     vote_average: float | None
@@ -107,6 +108,7 @@ class TMDBService:
 
         return TMDBMetadata(
             title=details.get("title") or title,
+            original_title=details.get("original_title") or None,
             overview=details.get("overview") or None,
             poster_url=TMDBClient.poster_url(details.get("poster_path")),
             vote_average=details.get("vote_average"),
