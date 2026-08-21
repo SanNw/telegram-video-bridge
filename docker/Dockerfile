@@ -13,9 +13,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 # tgcrypto (dependência do Pyrogram) não publica wheel pré-compilada para
 # todo ambiente e precisa compilar sua extensão C — build-essential fica só
 # neste estágio, não vai para a imagem final.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends build-essential
 
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
@@ -24,23 +25,25 @@ COPY pyproject.toml uv.lock README.md ./
 # `python -m app.main` (CWD entra no sys.path) — não precisamos instalar o
 # próprio pacote, o que evita um link de editable-install apontando de volta
 # para este estágio de build (que não existe na imagem final).
-RUN uv sync --frozen --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
 # --- Stage 2: imagem final, só com o venv pronto + FFmpeg ---
 FROM python:3.13-slim AS runtime
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg
 
 RUN useradd --create-home --uid 1000 bridge
 
 WORKDIR /app
 
-COPY --from=builder /build/.venv /app/.venv
-COPY app ./app
-COPY addons ./addons
-COPY config ./config
+COPY --chown=bridge:bridge --from=builder /build/.venv /app/.venv
+COPY --chown=bridge:bridge app ./app
+COPY --chown=bridge:bridge addons ./addons
+COPY --chown=bridge:bridge config ./config
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1
@@ -49,7 +52,7 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 # diretório de trabalho — batem com os pontos de montagem dos volumes abaixo
 # sem precisar de override aqui, mantendo "tudo via .env" (ver .env.example).
 RUN mkdir -p /app/media /app/logs /app/data \
-    && chown -R bridge:bridge /app
+    && chown bridge:bridge /app/media /app/logs /app/data
 
 USER bridge
 

@@ -157,9 +157,7 @@ async def test_get_json_returns_empty_on_non_dict_payload(client: TMDBClient) ->
 
 
 def test_poster_url_builds_full_url() -> None:
-    assert (
-        TMDBClient.poster_url("/abc123.jpg") == "https://image.tmdb.org/t/p/w500/abc123.jpg"
-    )
+    assert TMDBClient.poster_url("/abc123.jpg") == "https://image.tmdb.org/t/p/w500/abc123.jpg"
 
 
 def test_poster_url_returns_none_when_missing() -> None:
@@ -195,9 +193,7 @@ async def test_get_movie_credits_returns_none_on_empty_payload(client: TMDBClien
 
 
 async def test_get_movie_images_returns_full_dict(client: TMDBClient) -> None:
-    client._client.get.return_value = _FakeResponse(
-        {"backdrops": [{"file_path": "/back.jpg"}]}
-    )
+    client._client.get.return_value = _FakeResponse({"backdrops": [{"file_path": "/back.jpg"}]})
 
     images = await client.get_movie_images(27205)
 
@@ -222,9 +218,7 @@ async def test_get_movie_images_returns_none_on_empty_payload(client: TMDBClient
 
 
 def test_backdrop_url_builds_full_url() -> None:
-    assert (
-        TMDBClient.backdrop_url("/back.jpg") == "https://image.tmdb.org/t/p/w780/back.jpg"
-    )
+    assert TMDBClient.backdrop_url("/back.jpg") == "https://image.tmdb.org/t/p/w780/back.jpg"
 
 
 def test_backdrop_url_returns_none_when_missing() -> None:
@@ -233,9 +227,7 @@ def test_backdrop_url_returns_none_when_missing() -> None:
 
 
 def test_profile_url_builds_full_url() -> None:
-    assert (
-        TMDBClient.profile_url("/face.jpg") == "https://image.tmdb.org/t/p/w185/face.jpg"
-    )
+    assert TMDBClient.profile_url("/face.jpg") == "https://image.tmdb.org/t/p/w185/face.jpg"
 
 
 def test_profile_url_returns_none_when_missing() -> None:

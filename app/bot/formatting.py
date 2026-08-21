@@ -10,7 +10,7 @@ from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo
 from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
-from app.services.tmdb_service import TMDBMetadata
+from app.services.tmdb_service import TMDBMetadata, TMDBMovie
 from app.utils.language_detection import detect_language_flag
 
 
@@ -106,9 +106,61 @@ def format_search_results(results: list[SearchResult]) -> str:
         year_suffix = f" ({result.year})" if result.year else ""
         flag = detect_language_flag(result.title)
         flag_prefix = f"{flag} " if flag else ""
-        lines.append(f"{position}. {flag_prefix}{result.title}{year_suffix} — _{result.addon_name}_")
+        lines.append(
+            f"{position}. {flag_prefix}{result.title}{year_suffix} — _{result.addon_name}_"
+        )
     lines.append("\nUse `/pick <número>` para adicionar à fila.")
     return "\n".join(lines)
+
+
+def format_catalog_page(movies: list[TMDBMovie], page: int, page_size: int = 5) -> str:
+    """Legenda compacta da seleção de filmes do TMDB."""
+    total_pages = max(1, (len(movies) + page_size - 1) // page_size)
+    start = page * page_size
+    visible = movies[start : start + page_size]
+    lines = ["🎬 *Escolha o filme*", f"Resultados do TMDB · página {page + 1}/{total_pages}"]
+    for offset, movie in enumerate(visible, start=1):
+        year = movie.release_date[:4] if movie.release_date else "—"
+        rating = f"{movie.vote_average:.1f}" if movie.vote_average else "—"
+        lines.append(f"\n{offset}. *{movie.title}* ({year}) · ⭐ {rating}")
+    return "\n".join(lines)
+
+
+def format_catalog_buttons(
+    movies: list[TMDBMovie], page: int, page_size: int = 5
+) -> InlineKeyboardMarkup:
+    """Botões de seleção e paginação do catálogo TMDB."""
+    start = page * page_size
+    rows = [
+        [InlineKeyboardButton(f"{offset}. {movie.title[:40]}", callback_data=f"movie:{index}")]
+        for offset, (index, movie) in enumerate(
+            zip(range(start, start + page_size), movies[start : start + page_size], strict=False),
+            start=1,
+        )
+    ]
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton("◀ Anterior", callback_data=f"catalog:{page - 1}"))
+    if start + page_size < len(movies):
+        navigation.append(InlineKeyboardButton("Próxima ▶", callback_data=f"catalog:{page + 1}"))
+    if navigation:
+        rows.append(navigation)
+    return InlineKeyboardMarkup(rows)
+
+
+def format_movie_card(movie: TMDBMovie, metadata: TMDBMetadata) -> str:
+    """Legenda rica exibida depois da escolha do filme."""
+    year = metadata.release_date[:4] if metadata.release_date else "—"
+    rating = f"{metadata.vote_average:.1f}" if metadata.vote_average else "—"
+    genres = ", ".join(metadata.genres) or "—"
+    overview = metadata.overview or "Sinopse não disponível em português."
+    if len(overview) > 650:
+        overview = overview[:647].rstrip() + "..."
+    return (
+        f"🎞 *{metadata.title}* ({year})\n"
+        f"⭐ {rating} · {genres}\n\n{overview}\n\n"
+        "Escolha uma fonte abaixo. A melhor opção aparece primeiro."
+    )
 
 
 def format_tmdb_rich_message(result: SearchResult, metadata: TMDBMetadata) -> str:
@@ -124,7 +176,11 @@ def format_tmdb_rich_message(result: SearchResult, metadata: TMDBMetadata) -> st
     `metadata.release_date`), não do `result` do addon — `result` já serve
     apenas de fallback de ano quando o TMDB não traz `release_date`.
     """
-    year = metadata.release_date[:4] if metadata.release_date else (str(result.year) if result.year else "")
+    year = (
+        metadata.release_date[:4]
+        if metadata.release_date
+        else (str(result.year) if result.year else "")
+    )
     year_suffix = f" ({year})" if year else ""
     lines = [f"<h2>{_escape_html(metadata.title)}{year_suffix}</h2>"]
     if metadata.poster_url:
@@ -181,10 +237,17 @@ def format_stream_buttons(
 
 
 def _format_stream_button_label(addon_name: str, candidate: StreamCandidate) -> str:
-    quality_suffix = f" ({candidate.quality})" if candidate.quality else ""
     flag = detect_language_flag(f"{candidate.title} {candidate.quality or ''}")
-    flag_prefix = f"{flag} " if flag else ""
-    return f"▶️ {flag_prefix}{addon_name}{quality_suffix}"
+    quality = f" ({candidate.quality})" if candidate.quality else ""
+    label = f"▶️ {f'{flag} ' if flag else ''}{addon_name}{quality}"
+    details: list[str] = []
+    if candidate.size_bytes:
+        details.append(f"{candidate.size_bytes / 1024**3:.1f} GB")
+    if candidate.seeds is not None:
+        details.append(f"{candidate.seeds} seeders")
+    if details:
+        label += " · " + " · ".join(details)
+    return label[:64]
 
 
 def _escape_html(text: str) -> str:

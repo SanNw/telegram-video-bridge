@@ -14,10 +14,10 @@ def _wait_for_content(path: object, timeout: float = 2.0) -> str:
     """Loguru grava de forma assíncrona o suficiente para exigir um pequeno poll em disco."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if path.exists() and path.read_text():  # type: ignore[attr-defined]
-            return path.read_text()  # type: ignore[attr-defined]
+        if path.exists() and path.read_text(encoding="utf-8"):  # type: ignore[attr-defined]
+            return path.read_text(encoding="utf-8")  # type: ignore[attr-defined]
         time.sleep(0.02)
-    return path.read_text() if path.exists() else ""  # type: ignore[attr-defined]
+    return path.read_text(encoding="utf-8") if path.exists() else ""  # type: ignore[attr-defined]
 
 
 def test_setup_logging_creates_all_four_log_files(make_settings: Callable[..., Settings]) -> None:

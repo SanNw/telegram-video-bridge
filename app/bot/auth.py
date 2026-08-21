@@ -29,6 +29,30 @@ from app.config.settings import Settings
 _DENIED_MEMBER_STATUSES = frozenset({ChatMemberStatus.LEFT, ChatMemberStatus.BANNED})
 
 
+async def is_authorized(settings: Settings, client: Any, user_id: int) -> bool:
+    """Retorna se `user_id` pode controlar o bot neste momento."""
+    if user_id == settings.owner_user_id:
+        return True
+
+    if settings.stream_chat_id is not None:
+        try:
+            member = await client.get_chat_member(settings.stream_chat_id, user_id)
+        except RPCError:
+            pass
+        else:
+            if member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}:
+                return True
+
+    if settings.authorized_user_ids == "all":
+        try:
+            member = await client.get_chat_member(settings.chat_id, user_id)
+        except RPCError:
+            return False
+        return member.status not in _DENIED_MEMBER_STATUSES
+
+    return user_id in settings.authorized_user_ids
+
+
 def build_authorized_filter(settings: Settings) -> filters.Filter:
     """Filtro Pyrogram: verdadeiro se o remetente está autorizado a controlar o bot."""
 
@@ -37,16 +61,7 @@ def build_authorized_filter(settings: Settings) -> filters.Filter:
         if user is None:
             return False
 
-        if settings.authorized_user_ids == "all":
-            try:
-                member = await client.get_chat_member(settings.chat_id, user.id)
-            except RPCError:
-                # Não é membro do chat (ex.: USER_NOT_PARTICIPANT) ou a checagem
-                # falhou por outro motivo transitório — nega por padrão.
-                return False
-            return member.status not in _DENIED_MEMBER_STATUSES
-
-        return user.id in settings.authorized_user_ids
+        return await is_authorized(settings, client, user.id)
 
     return filters.create(_is_authorized)
 

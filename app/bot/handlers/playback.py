@@ -113,3 +113,37 @@ def register(app: Client, service: PlaybackService, authorized: filters.Filter) 
             await message.reply_text(str(exc))
         else:
             await message.reply_text("Item atual reiniciado.")
+
+    @app.on_message(filters.command("subdelay") & authorized)  # type: ignore[misc]
+    async def _subdelay(_: Client, message: Message) -> None:
+        if message.command is None or len(message.command) < 2:
+            await message.reply_text("Uso: `/subdelay <milissegundos>` — ex.: `500` ou `-750`.")
+            return
+        try:
+            delay_ms = int(message.command[1])
+        except ValueError:
+            await message.reply_text("Atraso inválido: informe milissegundos inteiros.")
+            return
+        try:
+            await service.set_subtitle_delay(delay_ms)
+        except NothingPlayingError as exc:
+            await message.reply_text(str(exc))
+        else:
+            await message.reply_text(f"Atraso da legenda ajustado para {delay_ms} ms.")
+
+    @app.on_message(filters.command(["legenda", "subtitles"]) & authorized)  # type: ignore[misc]
+    async def _subtitles(_: Client, message: Message) -> None:
+        if message.command is None or len(message.command) < 2:
+            await message.reply_text("Uso: `/legenda on` ou `/legenda off`.")
+            return
+        option = message.command[1].lower()
+        if option not in {"on", "off"}:
+            await message.reply_text("Opção inválida. Use `/legenda on` ou `/legenda off`.")
+            return
+        try:
+            await service.set_subtitles_enabled(option == "on")
+        except NothingPlayingError as exc:
+            await message.reply_text(str(exc))
+        else:
+            state = "ativada" if option == "on" else "desativada"
+            await message.reply_text(f"Legenda {state}.")

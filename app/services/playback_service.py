@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from pyrogram import Client
 
@@ -29,7 +30,7 @@ from app.services.models import ServiceStatus
 from app.streaming.ffmpeg_streamer import FFmpegStreamer
 from app.telegram.call_manager import TelegramCallManager
 from app.utils.logging import get_logger
-from app.utils.sanitize import MediaSource, resolve_source
+from app.utils.sanitize import MediaSource, SourceType, resolve_source
 
 _logger = get_logger("services")
 
@@ -49,9 +50,11 @@ class PlaybackService:
         self._degraded_reason: str | None = None
         self._started_at: datetime | None = None
         self._current_started_at: datetime | None = None
+        self._source_released_callbacks: list[Callable[[MediaSource], Awaitable[None]]] = []
 
         self._streamer.set_completion_callback(self._handle_item_completed)
         self._streamer.set_permanent_failure_callback(self._handle_streamer_permanent_failure)
+        self._streamer.set_source_released_callback(self._handle_source_released)
         self._call_manager.set_permanent_failure_callback(self._handle_call_permanent_failure)
 
     def set_source_released_callback(
@@ -62,7 +65,11 @@ class PlaybackService:
         Repassa direto para `FFmpegStreamer` — usado por `TorrentService.release`
         para decidir se remove o torrent do qBittorrent ou o mantém em seed.
         """
-        self._streamer.set_source_released_callback(callback)
+        self._source_released_callbacks.append(callback)
+
+    async def _handle_source_released(self, source: MediaSource) -> None:
+        for callback in self._source_released_callbacks:
+            await callback(source)
 
     @property
     def client(self) -> Client:
@@ -70,28 +77,55 @@ class PlaybackService:
         return self._call_manager.client
 
     async def start(self) -> None:
-        """Carrega a fila persistida e conecta o cliente Telegram. Não retoma reprodução."""
+        """Carrega a fila persistida, conecta o Telegram e retoma o item atual."""
         self._started_at = datetime.now(UTC)
         await self._queue.load()
         await self._call_manager.start()
+        current = self._queue.snapshot().current
+        while (
+            current is not None
+            and current.source.type is SourceType.LOCAL_FILE
+            and not Path(current.source.raw).is_file()
+        ):
+            _logger.warning(
+                "Ignorando arquivo restaurado ausente: {source}", source=current.source.raw
+            )
+            current = await self._queue.advance()
+        if current is not None:
+            try:
+                await self._start_or_switch_locked(current)
+            except Exception as exc:
+                await self._streamer.stop(notify_release=False)
+                self._degraded = True
+                self._degraded_reason = str(exc)
+                _logger.opt(exception=exc).error(
+                    "Não foi possível retomar a reprodução; aguardando novo comando."
+                )
         _logger.info("PlaybackService iniciado.")
 
     async def shutdown(self) -> None:
         """Encerra reprodução ativa (se houver) e desconecta o cliente Telegram."""
         async with self._lock:
             if self._is_active:
-                await self._stop_active_locked()
+                await self._streamer.stop(notify_release=False)
+                await self._call_manager.leave_call()
+                self._is_active = False
+                self._current_started_at = None
         await self._call_manager.stop()
         _logger.info("PlaybackService encerrado.")
 
-    async def play(self, source_raw: str, requested_by: int) -> int:
+    async def play(
+        self, source_raw: str, requested_by: int, subtitle_path: str | None = None
+    ) -> int:
         """Valida e enfileira `source_raw`; inicia a reprodução imediatamente se ociosa.
 
         Retorna a posição na fila (1-indexada). Levanta `InvalidSourceError` (fonte
         inválida) ou `QueueFullError` (fila cheia) — ambas tratadas por `bot/`.
         """
         media_source = resolve_source(source_raw, self._settings.media_path)
-        item = QueueItem(source=media_source, requested_by=requested_by)
+        item = QueueItem(
+            source=media_source, requested_by=requested_by, subtitle_path=subtitle_path
+        )
         position = await self._queue.add(item)
 
         async with self._lock:
@@ -119,6 +153,7 @@ class PlaybackService:
             if not self._is_active:
                 raise NothingPlayingError("Nada está tocando no momento.")
             await self._stop_active_locked()
+            await self._queue.discard_current()
 
     async def skip(self) -> QueueItem | None:
         """Pula para o próximo item da fila (ignora loop de item). `None` se a fila esvaziou."""
@@ -166,6 +201,56 @@ class PlaybackService:
         await self._streamer.restart()
         self._current_started_at = datetime.now(UTC)
 
+    async def set_subtitle_delay(self, delay_ms: int) -> None:
+        """Ajusta a legenda e retoma aproximadamente da posição atual."""
+        current = self._queue.snapshot().current
+        if (
+            not self._is_active
+            or current is None
+            or current.subtitle_path is None
+            or not current.subtitles_enabled
+        ):
+            raise NothingPlayingError("Não há filme legendado em reprodução.")
+        elapsed = (
+            (datetime.now(UTC) - self._current_started_at).total_seconds()
+            if self._current_started_at is not None
+            else 0.0
+        )
+        await self._queue.set_subtitle_delay(delay_ms)
+        try:
+            output_url = await self._call_manager.prepare_rtmp()
+        except Exception as exc:
+            _logger.warning("RTMP indisponível ao ajustar legenda: {err}", err=exc)
+            output_url = None
+        await self._streamer.change_source(
+            current.source, output_url, current.subtitle_path, delay_ms, elapsed
+        )
+        self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
+
+    async def set_subtitles_enabled(self, enabled: bool) -> None:
+        current = self._queue.snapshot().current
+        if not self._is_active or current is None or current.subtitle_path is None:
+            raise NothingPlayingError("Não há legenda disponível para este filme.")
+        elapsed = (
+            (datetime.now(UTC) - self._current_started_at).total_seconds()
+            if self._current_started_at is not None
+            else 0.0
+        )
+        await self._queue.set_subtitles_enabled(enabled)
+        try:
+            output_url = await self._call_manager.prepare_rtmp()
+        except Exception as exc:
+            _logger.warning("RTMP indisponível ao alternar legenda: {err}", err=exc)
+            output_url = None
+        await self._streamer.change_source(
+            current.source,
+            output_url,
+            current.subtitle_path if enabled else None,
+            current.subtitle_delay_ms,
+            elapsed,
+        )
+        self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
+
     def now_playing(self) -> tuple[QueueItem, datetime] | None:
         """Item em reprodução + horário de início, para `/nowplaying`. `None` se ocioso."""
         current = self._queue.snapshot().current
@@ -196,10 +281,32 @@ class PlaybackService:
         )
 
     async def _start_or_switch_locked(self, item: QueueItem) -> None:
-        await self._streamer.change_source(item.source)
-        await self._call_manager.send_media(
-            self._streamer.video_pipe_path, self._streamer.audio_pipe_path
-        )
+        subtitle_path = item.subtitle_path if item.subtitles_enabled else None
+        try:
+            output_url = await self._call_manager.prepare_rtmp()
+            if subtitle_path is None:
+                await self._streamer.change_source(item.source, output_url)
+            else:
+                await self._streamer.change_source(
+                    item.source, output_url, subtitle_path, item.subtitle_delay_ms
+                )
+            _logger.info("Reprodução iniciada por RTMP.")
+        except Exception as exc:
+            _logger.warning("RTMP indisponível ({err}); usando PyTgCalls.", err=exc)
+            if subtitle_path is None:
+                await self._streamer.change_source(item.source)
+            else:
+                await self._streamer.change_source(
+                    item.source, None, subtitle_path, item.subtitle_delay_ms
+                )
+            if self._is_active:
+                await self._call_manager.send_media(
+                    self._streamer.video_pipe_path, self._streamer.audio_pipe_path
+                )
+            else:
+                await self._call_manager.join_call(
+                    self._streamer.video_pipe_path, self._streamer.audio_pipe_path
+                )
         self._is_active = True
         self._degraded = False
         self._degraded_reason = None

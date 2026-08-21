@@ -100,11 +100,28 @@ class QueueManager:
             self._items.clear()
             await self._save()
 
+    async def discard_current(self) -> None:
+        async with self._lock:
+            self._current = None
+            await self._save()
+
     async def set_loop_mode(self, mode: LoopMode) -> None:
         """Define o modo de loop (`off`, `item` ou `queue`)."""
         async with self._lock:
             self._loop_mode = mode
             await self._save()
+
+    async def set_subtitle_delay(self, delay_ms: int) -> None:
+        async with self._lock:
+            if self._current is not None:
+                self._current.subtitle_delay_ms = delay_ms
+                await self._save()
+
+    async def set_subtitles_enabled(self, enabled: bool) -> None:
+        async with self._lock:
+            if self._current is not None:
+                self._current.subtitles_enabled = enabled
+                await self._save()
 
     def snapshot(self) -> PlaybackState:
         """Estado atual, consultável por `services/` para formatar `/queue` e `/status`."""

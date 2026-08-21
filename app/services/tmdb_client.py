@@ -72,9 +72,7 @@ class TMDBClient:
         Returns:
             Dict com os campos do filme, ou `None` se a requisição falhar.
         """
-        data = await self._get_json(
-            f"{_BASE_URL}/movie/{movie_id}", {"language": self._language}
-        )
+        data = await self._get_json(f"{_BASE_URL}/movie/{movie_id}", {"language": self._language})
         return data or None
 
     async def get_movie_credits(self, movie_id: int) -> dict[str, Any] | None:

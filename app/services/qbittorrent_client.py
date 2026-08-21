@@ -73,9 +73,7 @@ class QBittorrentClient(TorrentBackend):
         return handle
 
     async def status(self, handle: str) -> TorrentStatus | None:
-        response = await self._request(
-            "GET", "/torrents/info", params={"hashes": handle}
-        )
+        response = await self._request("GET", "/torrents/info", params={"hashes": handle})
         entries = response.json()
         if not entries:
             return None

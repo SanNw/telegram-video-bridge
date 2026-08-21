@@ -61,6 +61,10 @@ class FFmpegStreamer:
 
         self._process: asyncio.subprocess.Process | None = None
         self._current_source: MediaSource | None = None
+        self._output_url: str | None = None
+        self._subtitle_path: str | None = None
+        self._subtitle_delay_ms = 0
+        self._start_seconds = 0.0
         self._state: FFmpegProcessState = FFmpegProcessState.IDLE
         self._restart_count = 0
         self._last_error: str | None = None
@@ -70,6 +74,7 @@ class FFmpegStreamer:
         self._supervisor_task: asyncio.Task[None] | None = None
         self._healthcheck_task: asyncio.Task[None] | None = None
         self._pump_tasks: list[asyncio.Task[None]] = []
+        self._pipe_guard_fds: list[int] = []
         self._on_permanent_failure: Callable[[], Awaitable[None]] | None = None
         self._on_completion: Callable[[], Awaitable[None]] | None = None
         self._on_source_released: Callable[[MediaSource], Awaitable[None]] | None = None
@@ -98,7 +103,23 @@ class FFmpegStreamer:
         ffmpeg_bin = self._settings.ffmpeg_path
         command: list[str] = [ffmpeg_bin, "-y", "-loglevel", "warning", "-hide_banner"]
         command.extend(self._input_flags(source))
+        if self._start_seconds > 0:
+            command.extend(["-ss", f"{self._start_seconds:.3f}"])
         command.extend(["-i", source.raw])
+        if self._output_url is not None:
+            command.extend(
+                [
+                    "-map", "0:v:0", "-map", "0:a:0?",
+                    "-vf", self._video_filter(),
+                    "-r", str(VIDEO_FPS), "-c:v", "libx264", "-preset", "veryfast",
+                    "-tune", "zerolatency", "-b:v", "3000k", "-maxrate", "3500k",
+                    "-bufsize", "7000k", "-g", str(VIDEO_FPS * 2),
+                    "-pix_fmt", VIDEO_PIXEL_FORMAT, "-c:a", "aac", "-b:a", "128k",
+                    "-ar", str(AUDIO_SAMPLE_RATE), "-ac", str(AUDIO_CHANNELS),
+                    "-f", "flv", self._output_url,
+                ]
+            )
+            return command
         command.extend(
             [
                 "-map",
@@ -159,10 +180,10 @@ class FFmpegStreamer:
             await self._launch(source)
         self._spawn_supervisor(source)
 
-    async def stop(self) -> None:
+    async def stop(self, *, notify_release: bool = True) -> None:
         """Encerra o FFmpeg de forma graciosa (SIGTERM, depois SIGKILL se necessário)."""
         async with self._lock:
-            await self._stop_locked()
+            await self._stop_locked(notify_release=notify_release)
 
     async def restart(self) -> None:
         """Reinicia o FFmpeg mantendo a fonte atual (reinício manual, sem contar retries)."""
@@ -179,12 +200,31 @@ class FFmpegStreamer:
             await self._launch(source)
         self._spawn_supervisor(source)
 
-    async def change_source(self, source: MediaSource) -> None:
+    async def change_source(
+        self,
+        source: MediaSource,
+        output_url: str | None = None,
+        subtitle_path: str | None = None,
+        subtitle_delay_ms: int = 0,
+        start_seconds: float = 0.0,
+    ) -> None:
         """Troca a fonte sem exigir reconexão da chamada: só o writer dos pipes muda."""
         async with self._lock:
-            await self._stop_locked()
+            self._output_url = output_url
+            self._subtitle_path = subtitle_path
+            self._subtitle_delay_ms = subtitle_delay_ms
+            self._start_seconds = start_seconds
+            await self._stop_locked(notify_release=source != self._current_source)
             await self._launch(source)
         self._spawn_supervisor(source)
+
+    def _video_filter(self) -> str:
+        scale = f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2"
+        if self._subtitle_path is None:
+            return scale
+        delay = self._subtitle_delay_ms / 1000
+        escaped = self._subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        return f"{scale},setpts=PTS-{delay}/TB,subtitles='{escaped}',setpts=PTS+{delay}/TB"
 
     def healthcheck(self) -> HealthStatus:
         """Snapshot síncrono do estado atual, consultável por `services/` a qualquer momento."""
@@ -206,7 +246,9 @@ class FFmpegStreamer:
                 f"Binário FFmpeg não encontrado: {self._settings.ffmpeg_path!r}"
             )
 
-        self._ensure_pipes()
+        if self._output_url is None:
+            self._ensure_pipes()
+            self._open_pipe_guards()
         self._state = FFmpegProcessState.STARTING
         self._stopping_intentionally = False
         self._cancel_pump_tasks()
@@ -220,6 +262,7 @@ class FFmpegStreamer:
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
+            self._close_pipe_guards()
             self._state = FFmpegProcessState.FAILED
             self._last_error = str(exc)
             raise FFmpegStreamerError(f"Falha ao iniciar FFmpeg: {exc}") from exc
@@ -263,6 +306,7 @@ class FFmpegStreamer:
                 self._process.kill()
                 await self._process.wait()
         self._process = None
+        self._close_pipe_guards()
         self._state = FFmpegProcessState.STOPPED
 
     def _cancel_pump_tasks(self) -> None:
@@ -341,9 +385,25 @@ class FFmpegStreamer:
 
     def _ensure_pipes(self) -> None:
         self._pipes_dir.mkdir(parents=True, exist_ok=True)
+        mkfifo = getattr(os, "mkfifo", None)
+        if mkfifo is None:
+            raise RuntimeError("Named pipes require Linux/POSIX; run the project via Docker.")
         for pipe_path in (self.video_pipe_path, self.audio_pipe_path):
             if not pipe_path.exists():
-                os.mkfifo(pipe_path)
+                mkfifo(pipe_path)
+
+    def _open_pipe_guards(self) -> None:
+        """Mantém ambos os FIFOs abertos para FFmpeg e PyTgCalls não travarem em ordem cruzada."""
+        self._close_pipe_guards()
+        self._pipe_guard_fds = [
+            os.open(pipe_path, os.O_RDWR | getattr(os, "O_NONBLOCK", 0))
+            for pipe_path in (self.video_pipe_path, self.audio_pipe_path)
+        ]
+
+    def _close_pipe_guards(self) -> None:
+        for fd in self._pipe_guard_fds:
+            os.close(fd)
+        self._pipe_guard_fds = []
 
     async def _periodic_healthcheck(self) -> None:
         interval = self._settings.ffmpeg_healthcheck_interval_seconds

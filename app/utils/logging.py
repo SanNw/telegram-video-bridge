@@ -72,6 +72,7 @@ def setup_logging(settings: Settings) -> None:
 
     logger.add(
         settings.log_dir / "bot.log",
+        encoding="utf-8",
         level=settings.log_level,
         rotation=settings.log_rotation,
         retention=settings.log_retention,
@@ -81,6 +82,7 @@ def setup_logging(settings: Settings) -> None:
     )
     logger.add(
         settings.log_dir / "stream.log",
+        encoding="utf-8",
         level=settings.log_level,
         rotation=settings.log_rotation,
         retention=settings.log_retention,
@@ -90,6 +92,7 @@ def setup_logging(settings: Settings) -> None:
     )
     logger.add(
         settings.log_dir / "ffmpeg.log",
+        encoding="utf-8",
         level="DEBUG",
         rotation=settings.log_rotation,
         retention=settings.log_retention,
@@ -99,6 +102,7 @@ def setup_logging(settings: Settings) -> None:
     )
     logger.add(
         settings.log_dir / "errors.log",
+        encoding="utf-8",
         level="ERROR",
         rotation=settings.log_rotation,
         retention=settings.log_retention,

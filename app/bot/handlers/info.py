@@ -20,7 +20,7 @@ _START_TEXT = (
     "Use /help para ver os comandos disponíveis."
 )
 
-_HELP_TEXT = (
+HELP_TEXT = (
     "*Comandos*\n"
     "/play <fonte> — adiciona uma fonte à fila (inicia a reprodução se ociosa)\n"
     "/pause — pausa a chamada\n"
@@ -37,7 +37,10 @@ _HELP_TEXT = (
     "/nowplaying — mostra o item em reprodução e há quanto tempo\n"
     "/uptime — há quanto tempo o processo está em execução\n"
     "/find <busca> — procura fontes de mídia nos addons habilitados\n"
+    "/canal <busca> — procura um filme já enviado ao canal\n"
     "/pick <número> — adiciona à fila um resultado do /find\n"
+    "/legenda <on|off> — ativa ou desativa legendas automáticas\n"
+    "/subdelay <ms> — adianta (negativo) ou atrasa (positivo) a legenda\n"
     "/addons — lista addons instalados\n"
     "/addon <info|enable|disable|reload|uninstall> <nome> — gerencia um addon\n"
     "/ping — latência do bot\n"
@@ -55,7 +58,7 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("help"))  # type: ignore[misc]
     async def _help(_: Client, message: Message) -> None:
-        await message.reply_text(_HELP_TEXT)
+        await message.reply_text(HELP_TEXT)
 
     @app.on_message(filters.command("ping"))  # type: ignore[misc]
     async def _ping(_: Client, message: Message) -> None:

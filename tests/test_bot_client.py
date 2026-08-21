@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock, patch
 
 from app.bot.client import build_bot
 from app.config.settings import Settings
@@ -45,7 +45,7 @@ def test_build_bot_registers_all_command_groups_without_bot_client(
     # + 4 addons (addons/addon/find/pick)
     # + 1 fallback = 23 handlers registrados, tudo no client de sessão
     #   (sem bot_client, /find e /pick caem de volta nele).
-    assert len(registered) == 23
+    assert len(registered) == 25
 
 
 def test_build_bot_registers_search_on_bot_client_when_provided(
@@ -69,9 +69,9 @@ def test_build_bot_registers_search_on_bot_client_when_provided(
     # um segundo registro do fallback "não autorizado" (agora um por client):
     # 4 públicos + 7 reprodução + 4 fila + 3 status + 2 addons (addons/addon)
     # + 1 fallback = 21.
-    assert len(session_registered) == 21
-    # Client de bot só recebe find/pick + o fallback "não autorizado" dele: 3.
-    assert len(bot_registered) == 3
+    assert len(session_registered) == 23
+    # Client de bot recebe também o onboarding privado de primeiro contato.
+    assert len(bot_registered) == 26
 
 
 def test_build_bot_uses_service_client_not_a_new_session(
@@ -87,3 +87,18 @@ def test_build_bot_uses_service_client_not_a_new_session(
     build_bot(fake_service, fake_addon_service, settings, fake_tmdb_service)
 
     assert fake_client.on_message.called
+
+
+def test_build_bot_keeps_search_fallback_off_session_client_when_bot_is_separate(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(authorized_user_ids=[1])
+    fake_client, _ = _make_fake_client()
+    fake_bot_client, _ = _make_fake_client()
+    fake_service = MagicMock(client=fake_client)
+
+    with patch("app.bot.client.unauthorized.register") as register:
+        build_bot(fake_service, MagicMock(), settings, MagicMock(), fake_bot_client)
+
+    register.assert_any_call(fake_client, ANY, search_commands=False)
+    register.assert_any_call(fake_bot_client, ANY)

@@ -9,6 +9,7 @@ a Web API do qBittorrent (ver `test_services_qbittorrent_client.py`).
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -77,14 +78,18 @@ class _FakeBackend(TorrentBackend):
         self.closed = True
 
 
-def _status(*, has_metadata: bool, progress: float = 0.0, save_path: str = "/downloads") -> TorrentStatus:
+def _status(
+    *, has_metadata: bool, progress: float = 0.0, save_path: str = "/downloads"
+) -> TorrentStatus:
     return TorrentStatus(
         has_metadata=has_metadata, progress=progress, num_seeds=1, num_peers=1, save_path=save_path
     )
 
 
 def _file(index: int, path: str, size_bytes: int, downloaded_bytes: int = 0) -> TorrentFile:
-    return TorrentFile(index=index, path=path, size_bytes=size_bytes, downloaded_bytes=downloaded_bytes)
+    return TorrentFile(
+        index=index, path=path, size_bytes=size_bytes, downloaded_bytes=downloaded_bytes
+    )
 
 
 @pytest.fixture
@@ -128,12 +133,33 @@ async def test_resolve_full_happy_path_returns_local_path(
     assert backend.added[0].startswith("magnet:?xt=urn:btih:abc123")
 
 
+async def test_resolve_maps_windows_qbittorrent_path_to_container_media(
+    torrent_settings: Settings,
+    backend: _FakeBackend,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    settings = torrent_settings.model_copy(update={"qbittorrent_local_path": tmp_path})
+    service = TorrentService(settings, backend=backend)
+    monkeypatch.setattr(torrent_service_module, "_IS_POSIX", True)
+    backend.program_status(
+        "abc123", [_status(has_metadata=True, progress=1.0, save_path=r"C:\Downloads\media")]
+    )
+    video = _file(0, "Movie.mkv", 10 * 1024 * 1024, 10 * 1024 * 1024)
+    backend.program_files("abc123", [[video]])
+
+    path = await service.resolve(_candidate())
+
+    assert Path(path) == (tmp_path / "Movie.mkv").resolve()
+
+
 async def test_resolve_uses_magnet_uri_built_from_info_hash(
     service: TorrentService, backend: _FakeBackend
 ) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
     backend.program_files(
-        "abc123", [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]]
+        "abc123",
+        [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]],
     )
 
     await service.resolve(_candidate(info_hash="abc123", title="Movie"))
@@ -146,7 +172,8 @@ async def test_resolve_uses_explicit_magnet_when_present(
 ) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
     backend.program_files(
-        "abc123", [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]]
+        "abc123",
+        [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]],
     )
 
     await service.resolve(_candidate(magnet=_MAGNET, info_hash=None))
@@ -164,14 +191,18 @@ async def test_resolve_without_magnet_or_info_hash_raises(service: TorrentServic
 # ---------------------------------------------------------------------------
 
 
-async def test_resolve_metadata_timeout_raises(service: TorrentService, backend: _FakeBackend) -> None:
+async def test_resolve_metadata_timeout_raises(
+    service: TorrentService, backend: _FakeBackend
+) -> None:
     backend.program_status("abc123", [_status(has_metadata=False)])
 
     with pytest.raises(TorrentTimeoutError):
         await service.resolve(_candidate())
 
 
-async def test_resolve_buffer_timeout_raises(service: TorrentService, backend: _FakeBackend) -> None:
+async def test_resolve_buffer_timeout_raises(
+    service: TorrentService, backend: _FakeBackend
+) -> None:
     backend.program_status("abc123", [_status(has_metadata=True, progress=0.01)])
     small_progress_file = _file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=1024)
     backend.program_files("abc123", [[small_progress_file]])
@@ -189,7 +220,9 @@ async def test_resolve_ignores_sample_and_small_files(
     service: TorrentService, backend: _FakeBackend
 ) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
-    sample = _file(0, "Movie.sample.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)
+    sample = _file(
+        0, "Movie.sample.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024
+    )
     tiny = _file(1, "readme.mkv", size_bytes=1024, downloaded_bytes=1024)
     real = _file(2, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)
     backend.program_files("abc123", [[sample, tiny, real]])
@@ -199,7 +232,9 @@ async def test_resolve_ignores_sample_and_small_files(
     assert path.replace("\\", "/").endswith("/downloads/Movie.mkv")
 
 
-async def test_resolve_picks_largest_video_file(service: TorrentService, backend: _FakeBackend) -> None:
+async def test_resolve_picks_largest_video_file(
+    service: TorrentService, backend: _FakeBackend
+) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
     small = _file(0, "small.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)
     large = _file(1, "large.mkv", size_bytes=20 * 1024 * 1024, downloaded_bytes=20 * 1024 * 1024)
@@ -224,7 +259,8 @@ async def test_resolve_uses_file_index_hint(service: TorrentService, backend: _F
 async def test_resolve_no_video_file_raises(service: TorrentService, backend: _FakeBackend) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
     backend.program_files(
-        "abc123", [[_file(0, "readme.txt", size_bytes=2 * 1024 * 1024, downloaded_bytes=2 * 1024 * 1024)]]
+        "abc123",
+        [[_file(0, "readme.txt", size_bytes=2 * 1024 * 1024, downloaded_bytes=2 * 1024 * 1024)]],
     )
 
     with pytest.raises(TorrentResolutionError):
@@ -243,7 +279,8 @@ async def test_release_removes_torrent_when_setting_enabled(
     service = TorrentService(settings, backend=backend)
     backend.program_status("abc123", [_status(has_metadata=True)])
     backend.program_files(
-        "abc123", [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]]
+        "abc123",
+        [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]],
     )
     path = await service.resolve(_candidate())
 
@@ -257,7 +294,8 @@ async def test_release_keeps_seeding_when_setting_disabled(
 ) -> None:
     backend.program_status("abc123", [_status(has_metadata=True)])
     backend.program_files(
-        "abc123", [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]]
+        "abc123",
+        [[_file(0, "Movie.mkv", size_bytes=10 * 1024 * 1024, downloaded_bytes=10 * 1024 * 1024)]],
     )
     path = await service.resolve(_candidate())
 
@@ -266,7 +304,9 @@ async def test_release_keeps_seeding_when_setting_disabled(
     assert backend.removed == []
 
 
-async def test_release_ignores_untracked_source(service: TorrentService, backend: _FakeBackend) -> None:
+async def test_release_ignores_untracked_source(
+    service: TorrentService, backend: _FakeBackend
+) -> None:
     await service.release(MediaSource(raw="/media/other.mp4", type=SourceType.LOCAL_FILE))
 
     assert backend.removed == []

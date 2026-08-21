@@ -50,7 +50,9 @@ _MEDIA_ID_SEP = ":"
 # "Interstellar 2014 2160p\n👤 156 💾 21.87 GB ⚙️ YTS". Sem padrão formal, só
 # convenção de fato entre addons desse tipo.
 _SEEDS_RE = re.compile(r"👤\s*(\d+)|\bseeds?\s*[:=]?\s*(\d+)", re.IGNORECASE)
-_SIZE_RE = re.compile(r"💾\s*([\d.,]+)\s*(gi?b|mi?b)|\bsize\s*[:=]?\s*([\d.,]+)\s*(gi?b|mi?b)", re.IGNORECASE)
+_SIZE_RE = re.compile(
+    r"💾\s*([\d.,]+)\s*(gi?b|mi?b)|\bsize\s*[:=]?\s*([\d.,]+)\s*(gi?b|mi?b)", re.IGNORECASE
+)
 _SIZE_MULTIPLIERS = {"gb": 1024**3, "gib": 1024**3, "mb": 1024**2, "mib": 1024**2}
 
 # Prioridade de streams do addon `stremio`: até 4GB, mais seeds primeiro (ver
@@ -230,7 +232,10 @@ class Addon(BaseAddon):
         # pois o provedor que lista a mídia (ex.: Cinemeta) quase nunca é o
         # que serve os streams (ex.: Torrentio).
         batches = await asyncio.gather(
-            *(self._streams_from_provider(name, type_, upstream_id) for name in self._stream_provider_names)
+            *(
+                self._streams_from_provider(name, type_, upstream_id)
+                for name in self._stream_provider_names
+            )
         )
         candidates: list[StreamCandidate] = []
         seen: set[str] = set()
@@ -316,5 +321,7 @@ def _rank_candidates(candidates: list[StreamCandidate]) -> list[StreamCandidate]
         for candidate in candidates
         if candidate.size_bytes is None or candidate.size_bytes <= _MAX_SIZE_BYTES
     ]
-    within_limit.sort(key=lambda candidate: candidate.seeds if candidate.seeds is not None else -1, reverse=True)
+    within_limit.sort(
+        key=lambda candidate: candidate.seeds if candidate.seeds is not None else -1, reverse=True
+    )
     return within_limit

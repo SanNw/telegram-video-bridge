@@ -38,9 +38,9 @@ destaque visual. Só quando `register_search` roda no client de bot
 resolvido (via `resolve_top_candidates`/`format_stream_buttons`) — clicar
 enfileira direto, sem precisar de `/pick`. O Telegram descarta
 silenciosamente `reply_markup` em mensagens enviadas por uma conta de usuário
-(`SESSION_STRING`), então no client de sessão a Rich Message sai sem botão.
+(`SESSION_STRING`), então no client de sessão a resposta sai sem botão.
 Em ambos os casos a lista de texto numerada + instrução de `/pick <número>`
-sempre segue depois — os botões são a via primária de escolha, `/pick`
+sempre é enviada; no client de bot ela recebe os botões mesmo sem TMDB. Os botões são a via primária de escolha, `/pick`
 continua disponível como fallback secundário (útil se os botões expirarem,
 sumirem da tela, ou o TMDB não confirmar o filme).
 """
@@ -56,6 +56,9 @@ from app.addon_system.exceptions import AddonError
 from app.bot.formatting import (
     format_addon_info,
     format_addons_list,
+    format_catalog_buttons,
+    format_catalog_page,
+    format_movie_card,
     format_search_results,
     format_stream_buttons,
     format_tmdb_rich_message,
@@ -68,12 +71,16 @@ from app.services.exceptions import (
     TorrentResolutionError,
     TorrentTimeoutError,
 )
+from app.utils.logging import get_logger
 from app.utils.sanitize import InvalidSourceError
 
 _ADDON_ACTIONS = {"info", "enable", "disable", "reload", "uninstall"}
 _OWNER_ONLY_ACTIONS = {"enable", "disable", "reload", "uninstall"}
 
 _PLAY_CALLBACK_PREFIX = "play:"
+_MOVIE_CALLBACK_PREFIX = "movie:"
+_CATALOG_CALLBACK_PREFIX = "catalog:"
+_logger = get_logger("bot")
 
 
 def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
@@ -83,6 +90,16 @@ def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
 
 
 play_callback_filter = filters.create(_is_play_callback, "PlayCallbackFilter")
+
+
+def _is_catalog_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
+    data = getattr(callback_query, "data", None)
+    return isinstance(data, str) and data.startswith(
+        (_MOVIE_CALLBACK_PREFIX, _CATALOG_CALLBACK_PREFIX)
+    )
+
+
+catalog_callback_filter = filters.create(_is_catalog_callback, "CatalogCallbackFilter")
 
 
 def register_management(
@@ -135,7 +152,7 @@ def register_search(
     """Registra `/find`, `/pick` e o callback `play:` em `app`.
 
     `buttons_enabled` indica se `app` é o client de bot (`BOT_TOKEN`) — só
-    nesse caso a Rich Message de `/find` carrega botões inline (ver
+    nesse caso a resposta comum de `/find` carrega botões inline (ver
     docstring do módulo).
     """
 
@@ -145,54 +162,140 @@ def register_search(
             await message.reply_text("Uso: `/find <busca>`")
             return
         query = message.text.split(maxsplit=1)[1].strip()
-        results = await service.find(query)
-        if not results:
-            await message.reply_text(format_search_results(results))
-            message.stop_propagation()  # type: ignore[no-untyped-call]
-            return
-
-        chat = message.chat
-        metadata = service.last_metadata()
-        first = results[0]
-
-        if metadata is not None and chat is not None and chat.id is not None:
+        if not hasattr(service, "search_catalog"):
+            results = await service.find(query)
+            metadata = service.last_metadata()
             reply_markup = None
             if buttons_enabled:
                 candidates = await service.resolve_top_candidates()
                 reply_markup = format_stream_buttons(candidates) if candidates else None
-            await client.send_rich_message(
-                chat.id,
-                InputRichMessage(html=format_tmdb_rich_message(first, metadata)),
-                reply_markup=reply_markup,
+            if (
+                results
+                and metadata is not None
+                and message.chat is not None
+                and message.chat.id is not None
+            ):
+                try:
+                    await client.send_rich_message(
+                        message.chat.id,
+                        InputRichMessage(html=format_tmdb_rich_message(results[0], metadata)),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _logger.warning("Falha ao enviar destaque do TMDB: {error}", error=exc)
+            await message.reply_text(format_search_results(results), reply_markup=reply_markup)
+            message.stop_propagation()  # type: ignore[no-untyped-call]
+            return
+        if not buttons_enabled:
+            await message.reply_text("O catálogo interativo exige BOT_TOKEN configurado.")
+            message.stop_propagation()  # type: ignore[no-untyped-call]
+            return
+        movies = await service.search_catalog(query)
+        if not movies:
+            await message.reply_text(
+                "O TMDB não encontrou filmes ou está indisponível. Tente novamente."
             )
-        await message.reply_text(format_search_results(results))
+            message.stop_propagation()  # type: ignore[no-untyped-call]
+            return
+        caption = format_catalog_page(movies, 0)
+        markup = format_catalog_buttons(movies, 0)
+        if movies[0].poster_url:
+            await message.reply_photo(movies[0].poster_url, caption=caption, reply_markup=markup)
+        else:
+            await message.reply_text(caption, reply_markup=markup)
         # O _unauthorized (group=1) também casa filters.command("find"); sem
         # stop_propagation ele dispara após este handler e responde "Você não
         # tem permissão" mesmo quando o usuário está autorizado.
         message.stop_propagation()  # type: ignore[no-untyped-call]
 
+    @app.on_callback_query(catalog_callback_filter & authorized)  # type: ignore[misc]
+    async def _catalog(client: Client, callback_query: CallbackQuery) -> None:
+        data = callback_query.data if isinstance(callback_query.data, str) else ""
+        if data.startswith(_CATALOG_CALLBACK_PREFIX):
+            page = int(data.removeprefix(_CATALOG_CALLBACK_PREFIX))
+            movies = service.catalog()
+            await callback_query.edit_message_caption(
+                format_catalog_page(movies, page),
+                reply_markup=format_catalog_buttons(movies, page),
+            )
+            await callback_query.answer()
+            return
+
+        index = int(data.removeprefix(_MOVIE_CALLBACK_PREFIX))
+        await callback_query.answer("Procurando as melhores fontes...")
+        callback_message = callback_query.message
+        chat_id = (
+            callback_message.chat.id
+            if callback_message is not None and callback_message.chat is not None
+            else None
+        )
+        try:
+            movie, metadata, _ = await service.select_catalog_movie(index)
+            candidates = await service.resolve_top_candidates()
+        except (InvalidSearchIndexError, NoStreamsAvailableError) as exc:
+            if chat_id is not None:
+                await client.send_message(chat_id, str(exc))
+            return
+        if not candidates:
+            if chat_id is not None:
+                await client.send_message(
+                    chat_id,
+                    "Nenhuma fonte disponível para esse filme.",
+                )
+            return
+        chat = callback_message.chat if callback_message else None
+        if chat is None or chat.id is None:
+            return
+        caption = format_movie_card(movie, metadata)
+        markup = format_stream_buttons(candidates)
+        if metadata.poster_url:
+            await client.send_photo(
+                chat.id, metadata.poster_url, caption=caption, reply_markup=markup
+            )
+        else:
+            await client.send_message(chat.id, caption, reply_markup=markup)
+        await callback_query.edit_message_reply_markup(None)  # type: ignore[arg-type]
+
     @app.on_callback_query(play_callback_filter & authorized)  # type: ignore[misc]
-    async def _play_candidate(_: Client, callback_query: CallbackQuery) -> None:
+    async def _play_candidate(client: Client, callback_query: CallbackQuery) -> None:
         data = callback_query.data
         token = data.removeprefix(_PLAY_CALLBACK_PREFIX) if isinstance(data, str) else ""
         user_id = callback_query.from_user.id if callback_query.from_user else 0
+        callback_message = getattr(callback_query, "message", None)
+        chat_id = callback_message.chat.id if callback_message else None
+        if chat_id is not None:
+            await callback_query.answer("Preparando reprodução...")
         try:
             addon_name, position = await service.pick_candidate(token, user_id)
         except InvalidSearchIndexError as exc:
-            await callback_query.answer(str(exc), show_alert=True)
+            if chat_id is not None:
+                await client.send_message(chat_id, str(exc))
+            else:
+                await callback_query.answer(str(exc), show_alert=True)
             return
         except InvalidSourceError as exc:
-            await callback_query.answer(f"Fonte inválida: {exc}", show_alert=True)
+            if chat_id is not None:
+                await client.send_message(chat_id, f"Fonte inválida: {exc}")
+            else:
+                await callback_query.answer(f"Fonte inválida: {exc}", show_alert=True)
             return
         except QueueFullError as exc:
-            await callback_query.answer(f"Não foi possível adicionar: {exc}", show_alert=True)
+            if chat_id is not None:
+                await client.send_message(chat_id, f"Não foi possível adicionar: {exc}")
+            else:
+                await callback_query.answer(f"Não foi possível adicionar: {exc}", show_alert=True)
             return
         except (TorrentTimeoutError, TorrentResolutionError) as exc:
-            await callback_query.answer(
-                f"Falha ao baixar torrent: {exc}. Use /find de novo.", show_alert=True
-            )
+            if chat_id is not None:
+                await client.send_message(chat_id, f"Falha ao baixar torrent: {exc}")
+            else:
+                await callback_query.answer(f"Falha ao baixar torrent: {exc}", show_alert=True)
             return
-        await callback_query.answer(f"Adicionado à fila ({addon_name}), posição {position}.")
+        if chat_id is not None:
+            await client.send_message(
+                chat_id, f"Adicionado à fila ({addon_name}), posição {position}."
+            )
+        else:
+            await callback_query.answer(f"Adicionado à fila ({addon_name}), posição {position}.")
         await callback_query.edit_message_reply_markup(None)  # type: ignore[arg-type]
 
     @app.on_message(filters.command("pick") & authorized)  # type: ignore[misc]

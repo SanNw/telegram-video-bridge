@@ -111,7 +111,7 @@ Operador (Telegram)
 `streaming/` e `telegram/` não se importam entre si — são independentes,
 conectadas apenas pelos dois named pipes (`media/pipes/video.pipe` e
 `audio.pipe`) que `FFmpegStreamer` escreve e `TelegramCallManager` lê via
-`InputDevice` do `py-tgcalls`. É isso que permite trocar de fonte ou
+streams raw com `MediaSource.FILE` do `py-tgcalls`. É isso que permite trocar de fonte ou
 sobreviver a uma falha do FFmpeg **sem** derrubar a chamada em andamento: a
 chamada continua lendo dos mesmos pipes, só o processo que escreve neles é
 reiniciado. O formato exato (resolução, fps, sample rate) é a única fonte de
@@ -367,6 +367,7 @@ cp .env.example .env
 | `API_ID`, `API_HASH` | sim | De https://my.telegram.org |
 | `SESSION_STRING` | sim | String de sessão Pyrogram/Kurigram (ver abaixo) |
 | `CHAT_ID` | sim | Chat/grupo onde a chamada acontece |
+| `STREAM_CHAT_ID` | não | Canal que recebe a live; administradores também podem controlar o bot no privado. Vazio mantém `CHAT_ID` como destino |
 | `AUTHORIZED_USER_IDS` | não (mas fica inutilizável sem) | `user_id` separados por vírgula, ou `all` para qualquer membro atual do grupo em `CHAT_ID` |
 | `OWNER_USER_ID` | não (mas ninguém gerencia addons sem) | `user_id` autorizado a `/addon enable\|disable\|reload\|uninstall` — restrito a um único operador mesmo com `AUTHORIZED_USER_IDS=all` (ver Segurança) |
 | `LOG_LEVEL`, `LOG_DIR`, `LOG_ROTATION`, `LOG_RETENTION` | não | ver seção Logs |
@@ -508,10 +509,8 @@ git pull
 docker compose up -d --build   # reconstrói a imagem e reinicia
 ```
 
-A fila (`data/queue.json`) sobrevive ao restart do container — o processo
-carrega a fila persistida ao subir, mas **não retoma a reprodução
-automaticamente** (decisão deliberada: evita rejuntar uma chamada sem o
-operador pedir). Use `/play` ou `/skip` para retomar manualmente.
+A fila (`data/queue.json`) sobrevive ao restart do container. Se havia um filme
+em reprodução, o processo retoma o item e entra novamente na chamada ao subir.
 
 ## Solução de problemas
 

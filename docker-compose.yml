@@ -9,10 +9,9 @@ services:
       - .env
     volumes:
       - logs:/app/logs
-      - media:/app/media
+      - ${QBITTORRENT_SAVE_PATH:-./media/torrents}:/app/media/torrents
       - data:/app/data
 
 volumes:
   logs:
-  media:
   data:

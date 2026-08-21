@@ -10,8 +10,9 @@ buffer mínimo antes de liberar o caminho para `PlaybackService.play()`.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from app.addon_system.base import StreamCandidate
 from app.config.settings import Settings
@@ -39,6 +40,7 @@ _logger = get_logger("services")
 _VIDEO_EXTENSIONS = frozenset({".mp4", ".mkv", ".avi", ".mov", ".ts", ".m2ts"})
 _MIN_VIDEO_SIZE_BYTES = 5 * 1024 * 1024  # ignora amostras/arquivos residuais (<5MB)
 _POLL_INTERVAL_SECONDS = 2.0
+_IS_POSIX = os.name == "posix"
 
 
 class TorrentService:
@@ -66,9 +68,7 @@ class TorrentService:
         indisponibilidade, magnet inválido, nenhum vídeo encontrado).
         """
         magnet = candidate.magnet or (
-            build_magnet_uri(candidate.info_hash, candidate.title)
-            if candidate.info_hash
-            else None
+            build_magnet_uri(candidate.info_hash, candidate.title) if candidate.info_hash else None
         )
         if magnet is None:
             raise TorrentResolutionError(
@@ -88,6 +88,8 @@ class TorrentService:
 
         status = await self._get_status(handle)
         save_path = Path(status.save_path) if status else self._settings.qbittorrent_save_path
+        if _IS_POSIX and PureWindowsPath(str(save_path)).drive:
+            save_path = self._settings.qbittorrent_local_path
         local_path = str((save_path / video_file.path).resolve())
         self._handles_by_path[local_path] = handle
         _logger.info("Buffer atingido, iniciando reprodução: {path}", path=local_path)
@@ -109,9 +111,7 @@ class TorrentService:
         try:
             await self._backend.remove(handle)
         except (QBittorrentAuthError, QBittorrentUnavailableError) as exc:
-            _logger.warning(
-                "Falha ao remover torrent {hash}: {err}", hash=handle, err=exc
-            )
+            _logger.warning("Falha ao remover torrent {hash}: {err}", hash=handle, err=exc)
 
     async def close(self) -> None:
         """Fecha o backend subjacente (ex.: `httpx.AsyncClient` do `QBittorrentClient`)."""

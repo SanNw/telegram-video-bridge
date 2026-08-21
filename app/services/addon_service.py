@@ -12,6 +12,8 @@ nenhum dos dois isoladamente. Por isso o construtor depende de `TMDBService`.
 
 from __future__ import annotations
 
+import asyncio
+
 from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo, AddonManager
 from app.config.settings import Settings
@@ -21,8 +23,10 @@ from app.services.exceptions import (
     TorrentTimeoutError,
 )
 from app.services.playback_service import PlaybackService
-from app.services.tmdb_service import TMDBMetadata, TMDBService
+from app.services.stremio_client import StremioAddonClient
+from app.services.tmdb_service import TMDBMetadata, TMDBMovie, TMDBService
 from app.services.torrent_service import TorrentService
+from app.utils.language_detection import has_portuguese_audio
 from app.utils.logging import get_logger
 from app.utils.title_matching import matches_any
 
@@ -43,6 +47,7 @@ _TMDB_MATCH_THRESHOLD = 65.0
 # Score mínimo contra a query crua do usuário (sem normalização do TMDB) —
 # mais tolerante, usado só quando o TMDB não confirma o filme.
 _FUZZY_FALLBACK_THRESHOLD = 55.0
+_OPENSUBTITLES_URL = "https://opensubtitles-v3.strem.io"
 
 
 class AddonService:
@@ -61,7 +66,10 @@ class AddonService:
         self._tmdb = tmdb_service
         self._last_results: list[SearchResult] = []
         self._last_metadata: TMDBMetadata | None = None
+        self._catalog: list[TMDBMovie] = []
         self._candidates: dict[str, tuple[SearchResult, StreamCandidate]] = {}
+        self._settings = settings
+        self._subtitles = StremioAddonClient(_OPENSUBTITLES_URL)
 
     async def start(self) -> None:
         """Descobre e carrega todos os addons presentes em `addons_path`."""
@@ -109,6 +117,39 @@ class AddonService:
         self._last_metadata = metadata
         self._candidates = {}
         return filtered
+
+    async def search_catalog(self, query: str) -> list[TMDBMovie]:
+        """Busca exclusivamente no TMDB e guarda o catálogo para os callbacks."""
+        self._catalog = await self._tmdb.search(query)
+        self._last_results = []
+        self._last_metadata = None
+        self._candidates = {}
+        return self._catalog
+
+    def catalog(self) -> list[TMDBMovie]:
+        return self._catalog
+
+    async def select_catalog_movie(
+        self, index: int
+    ) -> tuple[TMDBMovie, TMDBMetadata, list[SearchResult]]:
+        """Seleciona um filme do TMDB e só então procura fontes nos addons."""
+        if index < 0 or index >= len(self._catalog):
+            raise InvalidSearchIndexError("Esse resultado expirou. Use /find de novo.")
+        movie = self._catalog[index]
+        metadata = await self._tmdb.details(movie.id)
+        if metadata is None:
+            raise NoStreamsAvailableError("O TMDB não conseguiu carregar os detalhes do filme.")
+        year = (
+            int(movie.release_date[:4])
+            if movie.release_date and movie.release_date[:4].isdigit()
+            else None
+        )
+        raw_results = await self._manager.search(f"{movie.title} {year}" if year else movie.title)
+        filtered = self._filter_results(raw_results, movie.title, metadata)
+        self._last_results = filtered
+        self._last_metadata = metadata
+        self._candidates = {}
+        return movie, metadata, filtered
 
     def last_metadata(self) -> TMDBMetadata | None:
         """Metadata do TMDB (se houver) obtido na última chamada a `find()`."""
@@ -193,12 +234,51 @@ class AddonService:
             title=result.title,
             source=source,
         )
-        return await self._playback.play(source, requested_by)
+        subtitle_path = (
+            None
+            if has_portuguese_audio(f"{candidate.title} {candidate.quality or ''}")
+            else await self._prepare_subtitle(result)
+        )
+        if subtitle_path is None:
+            return await self._playback.play(source, requested_by)
+        return await self._playback.play(source, requested_by, subtitle_path)
+
+    async def _prepare_subtitle(self, result: SearchResult) -> str | None:
+        """Baixa a melhor legenda PT-BR/pt quando o catálogo fornece IMDb ID."""
+        imdb_id = result.media_id.rsplit(":", 1)[-1]
+        if not imdb_id.startswith("tt") or not imdb_id[2:].isdigit():
+            return None
+        return await self.prepare_subtitle(imdb_id, result.title)
+
+    async def prepare_subtitle(self, imdb_id: str, title: str) -> str | None:
+        subtitles = await self._subtitles.get_subtitles("movie", imdb_id)
+        selected = next(
+            (
+                item
+                for language in ("pob", "por", "pt-BR", "pt")
+                for item in subtitles
+                if item.get("lang") == language and isinstance(item.get("url"), str)
+            ),
+            None,
+        )
+        if selected is None:
+            return None
+        content = await self._subtitles.download_subtitle(selected["url"])
+        if content is None:
+            return None
+        path = self._settings.qbittorrent_local_path / ".subtitles" / f"{imdb_id}-pt.srt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_bytes, content)
+        _logger.info("Legenda em português preparada para {title}.", title=title)
+        return str(path)
+
+    async def close(self) -> None:
+        await self._subtitles.close()
 
     async def resolve_top_candidates(self) -> list[tuple[str, SearchResult, StreamCandidate]]:
         """Resolve o melhor stream de cada addon distinto na última busca (`/find`).
 
-        Usado para montar os botões inline da Rich Message do TMDB: no máximo
+        Usado para montar os botões inline da resposta de `/find`: no máximo
         1 candidato por addon (o primeiro resultado desse addon na busca,
         melhor stream dentre as que respeitam `_MAX_STREAM_SIZE_BYTES` — nem
         todo addon filtra por tamanho por conta própria, ex.: `archive_org`

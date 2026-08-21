@@ -127,7 +127,9 @@ async def test_search_returns_empty_when_only_stream_providers_configured(
     plugin_module: ModuleType,
 ) -> None:
     # Torrentio sozinho: sem catálogo, a busca fica inerte.
-    instance = plugin_module.Addon(config={"streams": [{"name": "torrentio", "base_url": "https://x"}]})
+    instance = plugin_module.Addon(
+        config={"streams": [{"name": "torrentio", "base_url": "https://x"}]}
+    )
 
     assert await instance.search("anything") == []
 
@@ -269,9 +271,7 @@ async def test_get_streams_maps_url_and_infohash_entries(addon: Any) -> None:
 
 async def test_get_streams_discards_entries_without_url_or_infohash(addon: Any) -> None:
     client = _fake_client(addon)
-    client._client.get.return_value = _FakeResponse(
-        {"streams": [{"title": "no source at all"}]}
-    )
+    client._client.get.return_value = _FakeResponse({"streams": [{"title": "no source at all"}]})
 
     streams = await addon.get_streams("cinemeta:movie:tt1254207")
 
@@ -425,7 +425,15 @@ async def test_get_streams_ignores_upstream_name_in_media_id(separated: Any) -> 
 async def test_get_streams_no_stream_providers_returns_empty(plugin_module: ModuleType) -> None:
     # Só catálogo, sem nem um provedor de stream: get_streams fica inerte.
     instance = plugin_module.Addon(
-        config={"catalogs": [{"name": "cinemeta", "base_url": "https://x", "catalogs": [{"type": "movie", "id": "top"}]}]}
+        config={
+            "catalogs": [
+                {
+                    "name": "cinemeta",
+                    "base_url": "https://x",
+                    "catalogs": [{"type": "movie", "id": "top"}],
+                }
+            ]
+        }
     )
 
     assert await instance.get_streams("cinemeta:movie:tt0816692") == []
@@ -441,7 +449,13 @@ async def test_shared_name_reuses_one_httpx_client(plugin_module: ModuleType) ->
     # deve criar dois httpx.AsyncClient.
     instance = plugin_module.Addon(
         config={
-            "catalogs": [{"name": "cinemeta", "base_url": "https://cinemeta", "catalogs": [{"type": "movie", "id": "top"}]}],
+            "catalogs": [
+                {
+                    "name": "cinemeta",
+                    "base_url": "https://cinemeta",
+                    "catalogs": [{"type": "movie", "id": "top"}],
+                }
+            ],
             "streams": [{"name": "cinemeta", "base_url": "https://cinemeta"}],
         }
     )

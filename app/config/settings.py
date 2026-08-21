@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     api_hash: SecretStr
     session_string: SecretStr
     chat_id: int
+    stream_chat_id: int | None = Field(
+        default=None,
+        description="Canal que recebe a live; vazio mantém CHAT_ID como destino.",
+    )
 
     # --- Autorização do bot ---
     # NoDecode: sem isso, pydantic-settings tenta decodificar a env var como
@@ -113,7 +117,8 @@ class Settings(BaseSettings):
     # segue funcionando só com o que os addons já devolvem). Obtenha uma chave
     # em https://www.themoviedb.org/settings/api.
     tmdb_api_key: SecretStr | None = Field(
-        default=None, description="Chave da API TMDB (v3, bearer token). Vazio desativa a integração."
+        default=None,
+        description="Chave da API TMDB (v3, bearer token). Vazio desativa a integração.",
     )
     tmdb_language: str = Field(
         default="pt-BR", description="Idioma (ISO 639-1/BCP 47) dos metadados retornados pelo TMDB."
@@ -141,13 +146,18 @@ class Settings(BaseSettings):
     qbittorrent_host: str = Field(
         default="localhost", description="Host da Web API do qBittorrent."
     )
-    qbittorrent_port: int = Field(default=8080, gt=0, description="Porta da Web API do qBittorrent.")
-    qbittorrent_username: str = Field(default="admin", description="Usuário da Web API do qBittorrent.")
+    qbittorrent_port: int = Field(
+        default=8080, gt=0, description="Porta da Web API do qBittorrent."
+    )
+    qbittorrent_username: str = Field(
+        default="admin", description="Usuário da Web API do qBittorrent."
+    )
     qbittorrent_password: SecretStr = Field(
         default=SecretStr(""), description="Senha da Web API do qBittorrent."
     )
     qbittorrent_category: str | None = Field(
-        default=None, description="Categoria aplicada aos torrents adicionados pelo bot, se definida."
+        default=None,
+        description="Categoria aplicada aos torrents adicionados pelo bot, se definida.",
     )
     # IMPORTANTE: precisa ser um caminho acessível localmente pelo processo do
     # bridge (mesma máquina ou volume compartilhado) — a Web API do qBittorrent
@@ -158,8 +168,14 @@ class Settings(BaseSettings):
         default=Path("media/torrents"),
         description="Diretório de download dos torrents, acessível localmente pelo bridge.",
     )
+    qbittorrent_local_path: Path = Field(
+        default=Path("media/torrents"),
+        description="Ponto onde o diretório do qBittorrent está montado dentro do bridge.",
+    )
     torrent_buffer_mb: float = Field(
-        default=50.0, gt=0, description="Buffer mínimo (MB) baixado do arquivo antes de liberar ao FFmpeg."
+        default=50.0,
+        gt=0,
+        description="Buffer mínimo (MB) baixado do arquivo antes de liberar ao FFmpeg.",
     )
     torrent_timeout_seconds: float = Field(
         default=60.0,

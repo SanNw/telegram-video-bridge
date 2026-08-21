@@ -18,6 +18,7 @@ from pyrogram import Client
 from app.bot.client import build_bot
 from app.config.settings import get_settings
 from app.services.addon_service import AddonService
+from app.services.channel_media_service import ChannelMediaService
 from app.services.playback_service import PlaybackService
 from app.services.tmdb_service import TMDBService
 from app.services.torrent_service import TorrentService
@@ -46,17 +47,28 @@ async def _run() -> None:
     service.set_source_released_callback(torrent_service.release)
     tmdb_service = TMDBService(settings)
     addon_service = AddonService(settings, service, torrent_service, tmdb_service)
+    channel_media_service = ChannelMediaService(
+        settings, service.client, service, addon_service, tmdb_service
+    )
+    service.set_source_released_callback(channel_media_service.release)
 
     bot_client: Client | None = None
     if settings.bot_token is not None:
         bot_client = Client(
             name="telegram-video-bridge-botapi",
+            workdir="/app/data",
             api_id=settings.api_id,
             api_hash=settings.api_hash.get_secret_value(),
             bot_token=settings.bot_token.get_secret_value(),
-            in_memory=True,
         )
-    build_bot(service, addon_service, settings, tmdb_service, bot_client)
+    build_bot(
+        service,
+        addon_service,
+        settings,
+        tmdb_service,
+        bot_client,
+        channel_media_service,
+    )
 
     await service.start()
     if bot_client is not None:
@@ -78,6 +90,8 @@ async def _run() -> None:
         await service.shutdown()
         if bot_client is not None:
             await bot_client.stop()
+        await addon_service.close()
+        await channel_media_service.close()
         await tmdb_service.close()
         await torrent_service.close()
 

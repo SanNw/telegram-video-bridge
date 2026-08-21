@@ -18,9 +18,19 @@ from __future__ import annotations
 from pyrogram import Client
 
 from app.bot.auth import build_authorized_filter, build_owner_filter
-from app.bot.handlers import addons, info, playback, queue, status, unauthorized
+from app.bot.handlers import (
+    addons,
+    channel,
+    info,
+    onboarding,
+    playback,
+    queue,
+    status,
+    unauthorized,
+)
 from app.config.settings import Settings
 from app.services.addon_service import AddonService
+from app.services.channel_media_service import ChannelMediaService
 from app.services.playback_service import PlaybackService
 from app.services.tmdb_service import TMDBService
 
@@ -31,6 +41,7 @@ def build_bot(
     settings: Settings,
     tmdb_service: TMDBService,
     bot_client: Client | None = None,
+    channel_media_service: ChannelMediaService | None = None,
 ) -> Client:
     """Registra todos os handlers de comando e devolve o client de sessão.
 
@@ -42,17 +53,27 @@ def build_bot(
     authorized = build_authorized_filter(settings)
     owner = build_owner_filter(settings)
 
-    info.register(app)
-    playback.register(app, playback_service, authorized)
-    queue.register(app, playback_service, authorized)
-    status.register(app, playback_service, authorized)
-    addons.register_management(app, addon_service, authorized, owner)
+    def _register_controls(client: Client) -> None:
+        info.register(client)
+        playback.register(client, playback_service, authorized)
+        queue.register(client, playback_service, authorized)
+        status.register(client, playback_service, authorized)
+        addons.register_management(client, addon_service, authorized, owner)
+
+    _register_controls(app)
+    if bot_client is not None and bot_client is not app:
+        onboarding.register(bot_client, settings)
+        _register_controls(bot_client)
+        if channel_media_service is not None:
+            channel.register(bot_client, channel_media_service, authorized)
 
     search_client = bot_client if bot_client is not None else app
-    addons.register_search(search_client, addon_service, authorized, buttons_enabled=bot_client is not None)
+    addons.register_search(
+        search_client, addon_service, authorized, buttons_enabled=bot_client is not None
+    )
 
-    unauthorized.register(app)
-    if bot_client is not None:
-        unauthorized.register(bot_client)
+    unauthorized.register(app, authorized, search_commands=bot_client is None)
+    if bot_client is not None and bot_client is not app:
+        unauthorized.register(bot_client, authorized)
 
     return app

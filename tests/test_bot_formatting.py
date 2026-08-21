@@ -171,7 +171,7 @@ def test_format_tmdb_rich_message_escapes_html_in_overview() -> None:
     metadata = TMDBMetadata(
         title="Night of the Living Dead",
         original_title="Night of the Living Dead",
-        overview="<b>Perigo</b> & \"terror\"",
+        overview='<b>Perigo</b> & "terror"',
         poster_url=None,
         vote_average=None,
         genres=[],
@@ -181,7 +181,7 @@ def test_format_tmdb_rich_message_escapes_html_in_overview() -> None:
     )
     html = format_tmdb_rich_message(_search_result(), metadata)
     assert "<b>Perigo</b>" not in html
-    assert "&lt;b&gt;Perigo&lt;/b&gt; &amp; \"terror\"" in html
+    assert '&lt;b&gt;Perigo&lt;/b&gt; &amp; "terror"' in html
 
 
 def test_format_tmdb_rich_message_includes_backdrop_slideshow() -> None:
@@ -234,8 +234,12 @@ def test_format_tmdb_rich_message_includes_cast_slideshow_and_names() -> None:
         genres=[],
         release_date=None,
         cast=[
-            TMDBCastMember(name="Duane Jones", profile_url="https://image.tmdb.org/t/p/w185/duane.jpg"),
-            TMDBCastMember(name="Judith O'Dea", profile_url="https://image.tmdb.org/t/p/w185/judith.jpg"),
+            TMDBCastMember(
+                name="Duane Jones", profile_url="https://image.tmdb.org/t/p/w185/duane.jpg"
+            ),
+            TMDBCastMember(
+                name="Judith O'Dea", profile_url="https://image.tmdb.org/t/p/w185/judith.jpg"
+            ),
         ],
         backdrop_urls=[],
     )
@@ -246,7 +250,10 @@ def test_format_tmdb_rich_message_includes_cast_slideshow_and_names() -> None:
         '<img src="https://image.tmdb.org/t/p/w185/judith.jpg"/>'
         "</tg-slideshow>"
     ) in html
-    assert "<p>Elenco: Duane Jones, Judith O&#x27;Dea</p>" in html or "<p>Elenco: Duane Jones, Judith O'Dea</p>" in html
+    assert (
+        "<p>Elenco: Duane Jones, Judith O&#x27;Dea</p>" in html
+        or "<p>Elenco: Duane Jones, Judith O'Dea</p>" in html
+    )
 
 
 def test_format_tmdb_rich_message_cast_names_without_photos_skip_slideshow() -> None:
@@ -346,9 +353,7 @@ def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
         (
             "0",
             _search_result(),
-            StreamCandidate(
-                url="https://a.example/1.mp4", title="a", quality="1080p Legendado"
-            ),
+            StreamCandidate(url="https://a.example/1.mp4", title="a", quality="1080p Legendado"),
         ),
     ]
     markup = format_stream_buttons(candidates)

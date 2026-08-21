@@ -15,12 +15,12 @@ from typing import Any
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, Message
 
-_PLAY_CALLBACK_PREFIX = "play:"
+_CONTROLLED_CALLBACK_PREFIXES = ("play:", "movie:", "catalog:", "channel:")
 
 
 def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
     data = getattr(callback_query, "data", None)
-    return isinstance(data, str) and data.startswith(_PLAY_CALLBACK_PREFIX)
+    return isinstance(data, str) and data.startswith(_CONTROLLED_CALLBACK_PREFIXES)
 
 
 _CONTROLLED_COMMANDS = [
@@ -42,17 +42,36 @@ _CONTROLLED_COMMANDS = [
     "addon",
     "find",
     "pick",
+    "canal",
+    "legenda",
+    "subtitles",
+    "subdelay",
 ]
 
 
-def register(app: Client) -> None:
+def register(
+    app: Client,
+    authorized: filters.Filter | None = None,
+    *,
+    search_commands: bool = True,
+) -> None:
     """Registra o fallback de "não autorizado" para os comandos de controle."""
 
-    @app.on_message(filters.command(_CONTROLLED_COMMANDS), group=1)  # type: ignore[misc]
+    commands = _CONTROLLED_COMMANDS if search_commands else _CONTROLLED_COMMANDS[:-6]
+    message_filter = filters.command(commands)
+    callback_filter = filters.create(_is_play_callback)
+    if authorized is not None:
+        message_filter &= ~authorized
+        callback_filter &= ~authorized
+
+    @app.on_message(message_filter, group=1)  # type: ignore[misc]
     async def _unauthorized(_: Client, message: Message) -> None:
         await message.reply_text("Você não tem permissão para usar este comando.")
 
-    @app.on_callback_query(filters.create(_is_play_callback), group=1)  # type: ignore[misc]
+    if not search_commands:
+        return
+
+    @app.on_callback_query(callback_filter, group=1)  # type: ignore[misc]
     async def _unauthorized_callback(_: Client, callback_query: CallbackQuery) -> None:
         await callback_query.answer(
             "Você não tem permissão para usar este comando.", show_alert=True

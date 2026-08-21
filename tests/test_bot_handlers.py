@@ -45,10 +45,12 @@ class FakeMessage:
         self.from_user = SimpleNamespace(id=user_id) if user_id is not None else None
         self.chat = SimpleNamespace(id=-1001234567890)
         self.replies: list[str] = []
+        self.reply_markups: list[Any] = []
         self.edits: list[str] = []
 
-    async def reply_text(self, text: str, **_kwargs: Any) -> FakeMessage:
+    async def reply_text(self, text: str, **kwargs: Any) -> FakeMessage:
         self.replies.append(text)
+        self.reply_markups.append(kwargs.get("reply_markup"))
         return FakeMessage(text=text, user_id=None)
 
     async def edit_text(self, text: str, **_kwargs: Any) -> None:
@@ -400,6 +402,23 @@ async def test_authorized_filter_false_when_no_from_user(
     authorized = build_authorized_filter(settings)
     message = FakeMessage(text="/status", user_id=None)
     assert await authorized(None, message) is False
+
+
+async def test_authorized_filter_true_for_stream_channel_admin(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(
+        stream_chat_id=-1009876543210,
+        authorized_user_ids=[],
+    )
+    authorized = build_authorized_filter(settings)
+    client = _FakeMemberCheckClient(status=ChatMemberStatus.ADMINISTRATOR)
+    message = FakeMessage(text="/status", user_id=555)
+
+    assert await authorized(client, message) is True
+    assert client.calls == [(-1009876543210, 555)]
 
 
 class _FakeMemberCheckClient:
@@ -1026,6 +1045,7 @@ async def test_addon_action_error_is_reported(
     await dispatch(client, message)
     assert "não encontrado" in message.replies[0]
 
+
 async def test_addon_info_allowed_for_authorized_non_owner(
     addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
@@ -1038,6 +1058,7 @@ async def test_addon_info_allowed_for_authorized_non_owner(
     await dispatch(client, message)
     assert "archive_org" in message.replies[0]
 
+
 async def test_addon_enable_rejected_for_authorized_non_owner(
     addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
@@ -1046,6 +1067,7 @@ async def test_addon_enable_rejected_for_authorized_non_owner(
     await dispatch(client, message)
     assert addon_service.enable_calls == []
     assert "operador" in message.replies[0]
+
 
 async def test_addon_disable_rejected_for_authorized_non_owner(
     addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
@@ -1056,6 +1078,7 @@ async def test_addon_disable_rejected_for_authorized_non_owner(
     assert addon_service.disable_calls == []
     assert "operador" in message.replies[0]
 
+
 async def test_addon_reload_rejected_for_authorized_non_owner(
     addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
@@ -1065,6 +1088,7 @@ async def test_addon_reload_rejected_for_authorized_non_owner(
     assert addon_service.reload_calls == []
     assert "operador" in message.replies[0]
 
+
 async def test_addon_uninstall_rejected_for_authorized_non_owner(
     addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
 ) -> None:
@@ -1073,6 +1097,7 @@ async def test_addon_uninstall_rejected_for_authorized_non_owner(
     await dispatch(client, message)
     assert addon_service.uninstall_calls == []
     assert "operador" in message.replies[0]
+
 
 async def test_addon_enable_rejected_without_owner_configured(
     make_settings: Callable[..., Settings],
@@ -1375,7 +1400,7 @@ async def test_find_sends_reply_markup_with_one_button_per_addon(
     await dispatch(client, message)
 
     assert len(client.rich_messages) == 1
-    reply_markup = client.last_reply_markup
+    reply_markup = message.reply_markups[-1]
     assert reply_markup is not None
     assert len(reply_markup.inline_keyboard) == 1
     assert reply_markup.inline_keyboard[0][0].callback_data == "play:0"
@@ -1406,7 +1431,7 @@ async def test_find_no_reply_markup_when_no_candidates_resolved(
     await dispatch(client, message)
 
     assert len(client.rich_messages) == 1
-    assert client.last_reply_markup is None
+    assert message.reply_markups[-1] is None
 
 
 async def test_find_no_reply_markup_when_buttons_disabled(
@@ -1441,7 +1466,30 @@ async def test_find_no_reply_markup_when_buttons_disabled(
     await dispatch(client, message)
 
     assert len(client.rich_messages) == 1
-    assert client.last_reply_markup is None
+    assert message.reply_markups[-1] is None
+
+
+async def test_find_sends_buttons_without_tmdb_metadata(
+    addon_wired_client: tuple[FakeClient, _FakeAddonService, Settings],
+) -> None:
+    client, addon_service, _ = addon_wired_client
+    addon_service.last_metadata_result = None
+    addon_service.find_result = [
+        SearchResult(media_id="abc", title="Movie", year=2024, addon_name="stremio")
+    ]
+    addon_service.resolve_candidates_result = [
+        (
+            "0",
+            addon_service.find_result[0],
+            StreamCandidate(url="https://example.com/movie.mp4", title="Movie"),
+        )
+    ]
+    message = FakeMessage(text="/find movie", user_id=111)
+
+    await dispatch(client, message)
+
+    assert client.rich_messages == []
+    assert message.reply_markups[-1].inline_keyboard[0][0].callback_data == "play:0"
 
 
 async def test_play_candidate_success_answers_and_clears_markup(

@@ -1,7 +1,7 @@
 """Contrato de formato raw entre `streaming/` (produtor) e `telegram/` (consumidor).
 
 `FFmpegStreamer` escreve vídeo/áudio crus nestes pipes nomeados; `TelegramCallManager`
-os lê via `InputDevice` do py-tgcalls. As duas camadas não se importam entre si
+os lê via streams raw com `MediaSource.FILE` do py-tgcalls. As duas camadas não se importam entre si
 (mantendo a independência exigida pela arquitetura), então estas constantes — a
 única fonte de verdade do formato — vivem em `utils/`, importável por ambas.
 Mudar um valor aqui sem mudar o outro lado quebraria o pipeline silenciosamente.

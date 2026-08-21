@@ -49,7 +49,9 @@ class StremioAddonClient:
         """
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
-            timeout=timeout_seconds, headers={"User-Agent": _DEFAULT_USER_AGENT}
+            timeout=timeout_seconds,
+            headers={"User-Agent": _DEFAULT_USER_AGENT},
+            follow_redirects=True,
         )
 
     @property
@@ -139,6 +141,21 @@ class StremioAddonClient:
         data = await self._get_json(f"{self._base_url}/subtitles/{type_}/{id_}.json")
         subtitles = data.get("subtitles", [])
         return subtitles if isinstance(subtitles, list) else []
+
+    async def download_subtitle(self, url: str) -> bytes | None:
+        """Baixa uma legenda UTF-8, limitada a 2 MB."""
+        if not url.startswith("https://"):
+            return None
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            _logger.warning("Falha ao baixar legenda: {err}", err=exc)
+            return None
+        if len(response.content) > 2 * 1024 * 1024:
+            _logger.warning("Legenda descartada por exceder 2 MB.")
+            return None
+        return response.content
 
     async def _get_json(self, url: str) -> dict[str, Any]:
         """GET genérico com tratamento de timeout, status HTTP e JSON malformado.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.utils.language_detection import detect_language_flag
+from app.utils.language_detection import detect_language_flag, has_portuguese_audio
 
 
 def test_detect_language_flag_dual_audio() -> None:
@@ -47,3 +47,10 @@ def test_detect_language_flag_none_when_no_marker() -> None:
 
 def test_detect_language_flag_case_insensitive() -> None:
     assert detect_language_flag("FILME DUBLADO") == "🇧🇷"
+
+
+def test_has_portuguese_audio_only_for_dubbed_or_br() -> None:
+    assert has_portuguese_audio("Filme Dublado") is True
+    assert has_portuguese_audio("Filme 🇧🇷") is True
+    assert has_portuguese_audio("Filme Legendado") is False
+    assert has_portuguese_audio("Filme Dual Áudio") is False

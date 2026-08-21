@@ -47,3 +47,12 @@ def detect_language_flag(text: str) -> str | None:
     if any(keyword in lowered for keyword in _SUBTITLED_KEYWORDS):
         return _FLAG_US
     return None
+
+
+def has_portuguese_audio(text: str) -> bool:
+    """Verdadeiro somente quando o texto indica áudio exclusivamente em português."""
+    lowered = text.lower()
+    if any(keyword in lowered for keyword in _DUBBED_KEYWORDS):
+        return True
+    flag = _FLAG_EMOJI_RE.search(text)
+    return flag is not None and flag.group(0) == _FLAG_BR

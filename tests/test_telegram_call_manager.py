@@ -1,8 +1,8 @@
 """Testes de `app/telegram/call_manager.py`.
 
 Pyrogram `Client` e `PyTgCalls` são substituídos por dublês de teste — nenhuma
-conexão MTProto real acontece aqui. `MediaStream`/`InputDevice` (construção
-pura, sem I/O) seguem sendo os objetos reais da lib.
+conexão MTProto real acontece aqui. `Stream`/`AudioStream`/`VideoStream`
+(construção pura, sem I/O) seguem sendo os objetos reais da lib.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from ntgcalls import MediaSource
+from pyrogram.raw.types.phone import GroupCallStreamRtmpUrl
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 
 import app.telegram.call_manager as call_manager_module
@@ -76,6 +78,19 @@ async def test_start_calls_pytgcalls_start_once(
     assert fake_call_py.start.await_count == 1
 
 
+async def test_prepare_rtmp_returns_complete_ingest_url(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+) -> None:
+    manager, _ = make_call_manager()
+    manager.client.resolve_peer = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+    manager.client.invoke = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[MagicMock(), GroupCallStreamRtmpUrl(url="rtmps://telegram/s/", key="secret")]
+    )
+
+    assert await manager.prepare_rtmp() == "rtmps://telegram/s/secret"
+    assert manager.healthcheck().state is CallState.CONNECTED
+
+
 async def test_join_call_invokes_play_with_correct_chat_id(
     make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]], tmp_path: Path
 ) -> None:
@@ -88,6 +103,11 @@ async def test_join_call_invokes_play_with_correct_chat_id(
     fake_call_py.play.assert_awaited_once()
     call_args = fake_call_py.play.await_args
     assert call_args.args[0] == -100999
+    stream = call_args.args[1]
+    assert stream.microphone.media_source is MediaSource.SHELL
+    assert stream.camera.media_source is MediaSource.SHELL
+    assert "cat --" in stream.microphone.path
+    assert "cat --" in stream.camera.path
     assert manager.healthcheck().state is CallState.CONNECTED
 
 
@@ -98,6 +118,17 @@ async def test_send_media_reuses_play(
     await manager.join_call(tmp_path / "v1.pipe", tmp_path / "a1.pipe")
     await manager.send_media(tmp_path / "v2.pipe", tmp_path / "a2.pipe")
     assert fake_call_py.play.await_count == 2
+
+
+async def test_send_media_joins_when_not_connected(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]], tmp_path: Path
+) -> None:
+    manager, fake_call_py = make_call_manager()
+
+    await manager.send_media(tmp_path / "video.pipe", tmp_path / "audio.pipe")
+
+    fake_call_py.play.assert_awaited_once()
+    assert manager.healthcheck().state is CallState.CONNECTED
 
 
 async def test_leave_call_swallows_not_in_call_error(

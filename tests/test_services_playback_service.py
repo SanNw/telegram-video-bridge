@@ -52,6 +52,17 @@ class _FakeQueueManager:
     async def clear(self) -> None:
         self.items = []
 
+    async def discard_current(self) -> None:
+        self.current = None
+
+    async def set_subtitle_delay(self, delay_ms: int) -> None:
+        if self.current is not None:
+            self.current.subtitle_delay_ms = delay_ms
+
+    async def set_subtitles_enabled(self, enabled: bool) -> None:
+        if self.current is not None:
+            self.current.subtitles_enabled = enabled
+
     async def remove(self, position: int) -> QueueItem:
         index = position - 1
         if index < 0 or index >= len(self.items):
@@ -75,6 +86,7 @@ class _FakeStreamer:
         self.state = FFmpegProcessState.IDLE
         self._on_completion: Callable[[], object] | None = None
         self._on_permanent_failure: Callable[[], object] | None = None
+        self._on_source_released: Callable[[MediaSource], object] | None = None
 
     def set_completion_callback(self, callback: Callable[[], object]) -> None:
         self._on_completion = callback
@@ -82,12 +94,17 @@ class _FakeStreamer:
     def set_permanent_failure_callback(self, callback: Callable[[], object]) -> None:
         self._on_permanent_failure = callback
 
+    def set_source_released_callback(
+        self, callback: Callable[[MediaSource], object]
+    ) -> None:
+        self._on_source_released = callback
+
     async def change_source(self, source: MediaSource) -> None:
         self.started_sources.append(source)
         self.stopped = False
         self.state = FFmpegProcessState.RUNNING
 
-    async def stop(self) -> None:
+    async def stop(self, *, notify_release: bool = True) -> None:
         self.stopped = True
         self.state = FFmpegProcessState.STOPPED
 
@@ -127,6 +144,10 @@ class _FakeCallManager:
         pass
 
     async def send_media(self, video_pipe: Path, audio_pipe: Path) -> None:
+        self.joined.append((video_pipe, audio_pipe))
+        self.left = False
+
+    async def join_call(self, video_pipe: Path, audio_pipe: Path) -> None:
         self.joined.append((video_pipe, audio_pipe))
         self.left = False
 
@@ -407,6 +428,38 @@ async def test_start_loads_queue_and_starts_call_manager(
     await service.start()
     queue, _, _ = _fakes(service)
     assert queue.loaded is True
+
+
+async def test_start_resumes_persisted_current_item(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    queue, streamer, call = _fakes(service)
+    movie = tmp_path / "movie.mkv"
+    movie.write_bytes(b"x")
+    source = MediaSource(str(movie), SourceType.LOCAL_FILE)
+    queue.current = QueueItem(source=source, requested_by=1)
+
+    await service.start()
+
+    assert streamer.started_sources == [source]
+    assert call.joined == [(streamer.video_pipe_path, streamer.audio_pipe_path)]
+
+
+async def test_start_survives_failure_resuming_current_item(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    queue, streamer, call = _fakes(service)
+    movie = tmp_path / "movie.mkv"
+    movie.write_bytes(b"x")
+    queue.current = QueueItem(source=MediaSource(str(movie), SourceType.LOCAL_FILE), requested_by=1)
+    call.join_call = MagicMock(side_effect=RuntimeError("sem chamada ativa"))
+
+    await service.start()
+
+    assert streamer.stopped is True
+    assert service.status().degraded is True
 
 
 async def test_shutdown_stops_active_playback(

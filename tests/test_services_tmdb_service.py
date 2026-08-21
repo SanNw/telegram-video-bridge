@@ -42,6 +42,21 @@ async def test_enabled_when_api_key_set(enabled_service: TMDBService) -> None:
     assert enabled_service.enabled is True
 
 
+async def test_search_strips_markdown_and_passes_year_separately(
+    enabled_service: TMDBService,
+) -> None:
+    enabled_service._client.search_movie.return_value = [  # type: ignore[attr-defined]
+        {"id": 10331, "title": "A Noite dos Mortos-Vivos", "release_date": "1968-10-04"}
+    ]
+
+    movies = await enabled_service.search("*Night of the Living Dead* (1968)")
+
+    enabled_service._client.search_movie.assert_awaited_once_with(  # type: ignore[attr-defined]
+        "Night of the Living Dead", year=1968
+    )
+    assert movies[0].id == 10331
+
+
 async def test_enrich_returns_none_when_search_finds_nothing(
     enabled_service: TMDBService,
 ) -> None:

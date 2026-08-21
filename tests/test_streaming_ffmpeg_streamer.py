@@ -10,6 +10,7 @@ testes, e escrever bloquearia para sempre (semântica de FIFO).
 from __future__ import annotations
 
 import asyncio
+import os
 import stat
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +29,13 @@ _HTTP_SOURCE = MediaSource(raw="http://example.com/video.mp4", type=SourceType.H
 _HLS_SOURCE = MediaSource(raw="https://example.com/stream.m3u8", type=SourceType.HLS)
 _RTMP_SOURCE = MediaSource(raw="rtmp://example.com/live", type=SourceType.RTMP)
 _RTSP_SOURCE = MediaSource(raw="rtsp://example.com/stream", type=SourceType.RTSP)
+
+
+@pytest.fixture(autouse=True)
+def require_posix_for_process_tests(request: pytest.FixtureRequest) -> None:
+    """The process tests use POSIX FIFOs and executable shell scripts."""
+    if os.name == "nt" and "make_fake_ffmpeg" in request.fixturenames:
+        pytest.skip("FFmpeg process tests require Linux/POSIX")
 
 
 async def _wait_until(predicate: Callable[[], bool], timeout_seconds: float = 2.0) -> None:
@@ -98,6 +106,35 @@ def test_build_command_never_uses_shell_string() -> None:
     import app.streaming.ffmpeg_streamer as module
 
     assert "create_subprocess_shell" not in module.__dict__
+
+
+def test_build_command_rtmp_output_uses_h264_aac_flv(
+    make_settings: Callable[..., Settings],
+) -> None:
+    streamer = FFmpegStreamer(make_settings())
+    streamer._output_url = "rtmps://telegram/s/secret"  # noqa: SLF001
+
+    command = streamer.build_command(_LOCAL_SOURCE)
+
+    assert command[command.index("-c:v") : command.index("-c:v") + 2] == ["-c:v", "libx264"]
+    assert "aac" in command
+    assert command[-2:] == ["flv", "rtmps://telegram/s/secret"]
+    assert str(streamer.video_pipe_path) not in command
+
+
+def test_build_command_burns_subtitle_with_delay(
+    make_settings: Callable[..., Settings],
+) -> None:
+    streamer = FFmpegStreamer(make_settings())
+    streamer._output_url = "rtmps://telegram/s/secret"  # noqa: SLF001
+    streamer._subtitle_path = "/app/media/subtitles/movie-pt.srt"  # noqa: SLF001
+    streamer._subtitle_delay_ms = 500  # noqa: SLF001
+
+    command = streamer.build_command(_LOCAL_SOURCE)
+    video_filter = command[command.index("-vf") + 1]
+
+    assert "subtitles='/app/media/subtitles/movie-pt.srt'" in video_filter
+    assert "setpts=PTS-0.5/TB" in video_filter
 
 
 # --- ciclo de vida do processo ---
@@ -188,6 +225,25 @@ async def test_change_source_updates_current_source(
         await streamer.change_source(_HTTP_SOURCE)
         health = streamer.healthcheck()
         assert health.current_source == _HTTP_SOURCE.raw
+    finally:
+        await streamer.stop()
+
+
+async def test_change_source_same_source_does_not_release_it(
+    make_settings: Callable[..., Settings], make_fake_ffmpeg: Callable[[str], Path]
+) -> None:
+    fake_ffmpeg = make_fake_ffmpeg("trap 'exit 0' TERM; while true; do sleep 0.05; done")
+    streamer = FFmpegStreamer(make_settings(ffmpeg_path=str(fake_ffmpeg)))
+    released: list[MediaSource] = []
+
+    async def on_release(source: MediaSource) -> None:
+        released.append(source)
+
+    streamer.set_source_released_callback(on_release)
+    await streamer.start(_LOCAL_SOURCE)
+    try:
+        await streamer.change_source(_LOCAL_SOURCE)
+        assert released == []
     finally:
         await streamer.stop()
 
