@@ -1,564 +1,231 @@
-# Telegram Video Bridge
+# Telerion
 
-Transmite vídeos autorizados para uma chamada de vídeo/grupo do Telegram via
-MTProto, rodando inteiramente em background — sem interface gráfica de
-terceiros, sem automação de tela. Controlado por comandos de um bot do
-Telegram (Pyrogram).
+Telerion é um sistema de cinema para Telegram. Administradores controlam o bot
+por uma conversa privada e os espectadores assistem à transmissão ao vivo no
+canal configurado.
 
-**Fora de escopo (v1):** captura de conteúdo protegido por DRM ou sem
-autorização de distribuição, dashboard web, múltiplas contas/sessões
-simultâneas.
+O projeto pesquisa filmes, apresenta catálogo enriquecido pelo TMDB, resolve
+fontes por addons, reproduz arquivos já publicados no canal, baixa torrents de
+forma progressiva e adiciona legendas em português. A transmissão prioriza RTMP
+e usa PyTgCalls como fallback automático.
 
-## Stack
+> Use apenas mídias que você tem autorização para armazenar e transmitir. O
+> projeto não contorna DRM e não determina a situação jurídica das fontes
+> configuradas pelo operador.
 
-| Camada | Escolha | Por quê |
-|---|---|---|
-| Runtime | Python 3.13 + `asyncio` + `uvloop` (Linux) | pedido no escopo |
-| Cliente MTProto | [Kurigram](https://pypi.org/project/kurigram/) | ver nota abaixo |
-| Chamada de vídeo | [py-tgcalls](https://pypi.org/project/py-tgcalls/) 2.3.x | ver nota abaixo |
-| Mídia | FFmpeg via `asyncio.subprocess` (nunca binding não oficial) | pedido no escopo |
-| Config | Pydantic Settings | pedido no escopo |
-| Logs | Loguru + Rich | pedido no escopo |
-| Gerenciador de pacotes | [uv](https://docs.astral.sh/uv/) | ver nota abaixo |
-| Deploy | Docker + Docker Compose | pedido no escopo |
+## Funcionalidades
 
-### Nota: Kurigram em vez do pacote `pyrogram` oficial
+- controle privado por administradores do canal;
+- catálogo interativo com pôsteres e informações do TMDB;
+- busca de fontes por addons Stremio e Internet Archive;
+- reprodução de vídeos já publicados no próprio canal com `/canal`;
+- transmissão RTMP H.264/AAC em 720p, com fallback PyTgCalls;
+- fila persistente, pausa, retomada, volume, repetição e avanço automático;
+- download progressivo por qBittorrent, sem esperar o arquivo inteiro;
+- armazenamento de mídia fora do disco do sistema;
+- limpeza automática dos arquivos temporários após a reprodução;
+- legendas automáticas em português por OpenSubtitles/Stremio;
+- ajuste de sincronização e ativação/desativação de legendas em tempo real;
+- isolamento de falhas por addon, retries e logs rotativos;
+- onboarding diferente para administradores e usuários não autorizados.
 
-O pacote **`pyrogram`** oficial no PyPI não recebe release desde abril/2023.
-Isso não é só uma preocupação teórica: **testado neste projeto**, o `pyrogram`
-oficial (2.0.106) é incompatível com o `py-tgcalls` atual — falta
-`pyrogram.errors.GroupcallForbidden`, usado pelo adapter interno do
-`py-tgcalls`, e a aplicação nem inicializa (`ImportError`).
+## Como funciona
 
-A correção foi trocar para **[Kurigram](https://pypi.org/project/kurigram/)**,
-um fork ativamente mantido (releases mensais) que instala no **mesmo
-namespace de import `pyrogram`** — ou seja, é um drop-in: nenhuma linha de
-código do projeto muda, só a dependência em `pyproject.toml`. Todo o código
-usa `from pyrogram import ...` normalmente.
+Telerion utiliza duas identidades do Telegram:
 
-Não instale o pacote `pyrogram` oficial junto com `kurigram` — os dois
-escrevem no mesmo caminho `pyrogram/` dentro de `site-packages` e vão
-conflitar. Por isso a dependência do `py-tgcalls` está declarada **sem** o
-extra `[pyrogram]` (que puxaria o pacote oficial): o `py-tgcalls` importa
-`pyrogram.*` de forma preguiçosa, então o namespace fornecido pelo Kurigram já
-é suficiente.
+1. **Conta comum dedicada**: autentica por `SESSION_STRING`, gerencia a live
+   RTMP, participa da chamada no fallback e acessa os arquivos publicados no
+   canal.
+2. **Bot do BotFather**: recebe comandos privados, envia o catálogo rico e
+   apresenta botões interativos.
 
-### Nota: py-tgcalls, não `pytgcalls`
+```text
+Administrador -> bot privado -> handlers -> serviços -> fila
+                                               |       |
+                         TMDB/addons/torrent/canal      v
+                                               FFmpeg -> RTMP
+                                                  \----> PyTgCalls (fallback)
 
-O nome do pacote no PyPI é **`py-tgcalls`** (pacote `pytgcalls`, sem hífen, é
-outro projeto — abandonado desde 2023). `py-tgcalls` está ativamente mantido,
-migrando para o core nativo `ntgcalls` (C++) com compatibilidade retroativa.
-
-### Nota: uv em vez de Poetry
-
-Resolução de dependências mais rápida, um binário só (sem depender de
-`python -m venv` + `pip` prévios), lockfile determinístico (`uv.lock`,
-versionado) e melhor cache de camada Docker via `uv sync --frozen`. Poetry
-seria uma escolha igualmente válida; `uv` foi preferido por já ser o padrão de
-fato em projetos Python novos e por integrar bem com multi-stage builds.
-
-## Arquitetura
-
-```
-telegram-video-bridge/
-├── app/
-│   ├── bot/          # comandos e camada de apresentação do Telegram
-│   │   └── handlers/  # um módulo por grupo de comandos
-│   ├── player/        # fila de reprodução (FIFO, loop, persistência)
-│   ├── streaming/      # pipeline FFmpeg (FFmpegStreamer)
-│   ├── telegram/       # gerenciamento da chamada (TelegramCallManager)
-│   ├── addon_system/   # núcleo do sistema de plugins (ver seção própria)
-│   ├── config/         # Settings centralizadas (Pydantic)
-│   ├── services/       # orquestração entre camadas (PlaybackService, AddonService)
-│   └── utils/          # logging, sanitização, retry, contrato de mídia
-├── addons/              # addons instalados, um por subpasta (ver "Sistema de addons")
-│   └── archive_org/      # addon oficial: Internet Archive
-├── data/                # fila serializada (queue.json), estado de addons
-├── logs/                # bot.log, stream.log, ffmpeg.log, errors.log
-├── media/               # arquivos locais para /play
-├── docker/              # Dockerfile
-├── tests/
-└── docker-compose.yml
+Espectadores ----------------------------------> live do canal
 ```
 
-**Regra de dependência:** `bot/` nunca importa de `streaming/`, `telegram/`
-ou `addon_system/` diretamente — só de `services/`. Handlers de comando não
-têm lógica de negócio: chamam um método de `PlaybackService`/`AddonService` e
-formatam a resposta. `addon_system/` também não conhece `streaming/` nem
-`telegram/`: um addon devolve uma URL reproduzível, e é `AddonService` quem
-entrega essa URL ao `PlaybackService` — o mesmo caminho que `/play` usa.
+Os handlers apenas validam comandos e formatam respostas. A orquestração fica
+em `app/services/`, o estado da fila em `app/player/`, o FFmpeg em
+`app/streaming/` e os transportes Telegram em `app/telegram/`.
 
-### Fluxo de dados
+## Requisitos
 
+- conta comum do Telegram dedicada ao Telerion;
+- aplicação Telegram com `API_ID` e `API_HASH` de
+  [my.telegram.org](https://my.telegram.org);
+- bot criado no [@BotFather](https://t.me/BotFather);
+- canal ou grupo com transmissão ao vivo;
+- Docker Desktop com Docker Compose;
+- qBittorrent com Web UI habilitada para fontes torrent;
+- **API Read Access Token** do
+  [TMDB](https://www.themoviedb.org/settings/api);
+- um disco com espaço para o buffer dos filmes.
+
+Python 3.13 e `uv` são usados uma vez no host para gerar a sessão e descobrir
+os IDs. Para instalar o `uv` no Windows:
+
+```powershell
+winget install --id Python.Python.3.13 -e
+python -m pip install uv
+python --version
+uv --version
 ```
-Operador (Telegram)
-      │  /play, /pause, /resume, /stop, /skip, /queue, /clear, /status, ...
-      ▼
-   app/bot/                (autorização, parsing, formatação de resposta)
-      │  chama métodos de PlaybackService
-      ▼
-   app/services/            (único ponto de orquestração)
-      │                 │                    │
-      ▼                 ▼                    ▼
- app/player/       app/streaming/       app/telegram/
- (fila FIFO,       (FFmpegStreamer:     (TelegramCallManager:
-  persistência)     inicia/monitora/     entra/sai/reconecta a
-                     reinicia o FFmpeg,   chamada via Pyrogram +
-                     escreve em pipes     py-tgcalls, lê dos
-                     nomeados)            mesmos pipes)
-```
 
-`streaming/` e `telegram/` não se importam entre si — são independentes,
-conectadas apenas pelos dois named pipes (`media/pipes/video.pipe` e
-`audio.pipe`) que `FFmpegStreamer` escreve e `TelegramCallManager` lê via
-streams raw com `MediaSource.FILE` do `py-tgcalls`. É isso que permite trocar de fonte ou
-sobreviver a uma falha do FFmpeg **sem** derrubar a chamada em andamento: a
-chamada continua lendo dos mesmos pipes, só o processo que escreve neles é
-reiniciado. O formato exato (resolução, fps, sample rate) é a única fonte de
-verdade compartilhada, em `app/utils/media_contract.py` — evita que as duas
-camadas fiquem fora de sincronia.
+O FFmpeg só é necessário no host para desenvolvimento; a imagem Docker já o
+inclui.
 
-## Comandos
+## Início rápido
 
-Autorização: comandos de controle exigem que o `user_id` esteja na whitelist
-`AUTHORIZED_USER_IDS` — ou, se `AUTHORIZED_USER_IDS=all`, que o usuário seja
-membro atual do grupo em `CHAT_ID` (checado em tempo real via
-`get_chat_member`); fora disso, a resposta é sempre "Você não tem permissão
-para usar este comando." `/start`, `/help`, `/ping` e `/version` são públicos
-(somente leitura, sem dado sensível).
-
-| Comando | Autorização | Resposta |
-|---|---|---|
-| `/start` | pública | Mensagem de boas-vindas |
-| `/help` | pública | Lista de comandos |
-| `/ping` | pública | `Pong! <latência>ms` |
-| `/version` | pública | Versão em execução |
-| `/play <fonte>` | whitelist | Enfileira; inicia a reprodução se ociosa. Sem argumento: uso. Fonte inválida: motivo. Fila cheia: motivo. |
-| `/pause` | whitelist | Pausa a chamada (FFmpeg continua rodando, bloqueado no pipe). "Nada está tocando" se ociosa. |
-| `/resume` | whitelist | Retoma uma chamada pausada. |
-| `/stop` | whitelist | Para a reprodução e sai da chamada. Não limpa a fila pendente. |
-| `/skip` | whitelist | Pula para o próximo item (ignora loop de item). Fila vazia: encerra. |
-| `/restart` | whitelist | Reinicia o item atual do zero (mesma fonte). "Nada está tocando" se ociosa. |
-| `/volume <0-200>` | whitelist | Ajusta o volume da chamada. Sem argumento: uso. Fora do intervalo ou não numérico: motivo. |
-| `/queue` | whitelist | Lista o item atual + itens pendentes. |
-| `/remove <posição>` | whitelist | Remove um item pendente da fila. Posição inválida: motivo. |
-| `/loop <off\|item\|queue>` | whitelist | Define o modo de repetição da fila. Modo desconhecido: valores aceitos. |
-| `/clear` | whitelist | Esvazia a fila pendente (não afeta o item em reprodução). |
-| `/status` | whitelist | Estado do streaming, da chamada, da fila e sinal de degradação. |
-| `/nowplaying` | whitelist | Item em reprodução, quem pediu e há quanto tempo toca. "Nada está tocando" se ociosa. |
-| `/uptime` | whitelist | Há quanto tempo o processo está em execução. |
-| `/find <busca>` | whitelist | Busca em todos os addons habilitados, filtra por relevância ao título (TMDB, com fallback fuzzy) e lista resultados numerados. Com `BOT_TOKEN` configurado, também manda botões inline — um por addon com stream resolvido — como forma primária de escolher. Sem argumento: uso. |
-| `/pick <número>` | whitelist | Fallback secundário aos botões (ou único caminho sem `BOT_TOKEN`): resolve o resultado `<número>` da última `/find` e enfileira. Posição inválida, sem fonte reproduzível, fonte inválida ou fila cheia: motivo. |
-| `/addons` | whitelist | Lista addons instalados (habilitado/desabilitado, versão). |
-| `/addon info <nome>` | whitelist | Versão, descrição, estado e healthcheck do addon. Nome ausente ou addon inexistente: motivo. |
-| `/addon <enable\|disable\|reload\|uninstall> <nome>` | `OWNER_USER_ID` | Gerencia um addon (ver "Sistema de addons"). Restrito ao operador mesmo com `AUTHORIZED_USER_IDS=all` — quem não é owner recebe recusa. Nome ausente ou addon inexistente: motivo. |
-
-Fontes suportadas em `/play` (e no destino final de `/pick`): arquivo local
-em `media/` (`.mp4`, `.mkv`, `.avi`, `.mov`, `.ts`, `.m2ts`), URL HTTP/HTTPS
-direta, HLS (`.m3u8`), RTMP, RTSP. Candidatos de addon que só trazem um
-torrent (`infoHash`/magnet, sem URL HTTP) são resolvidos via qBittorrent
-antes de chegar em `/play` — ver
-[Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent).
-
-## Como adicionar vídeos
-
-**Local (sem Docker):** copie o arquivo para a pasta `media/` do projeto e
-use `/play nome-do-arquivo.mp4`.
-
-**Docker:** `media/` é um volume nomeado (não um bind mount), então copie o
-arquivo para dentro do container:
+1. Clone o projeto:
 
 ```bash
-docker compose cp ./meu-video.mp4 bridge:/app/media/meu-video.mp4
+git clone https://github.com/SanNw/telegram-video-bridge.git
+cd telegram-video-bridge
 ```
 
-Depois use `/play meu-video.mp4` normalmente. URLs HTTP/HTTPS, HLS, RTMP e
-RTSP não precisam desse passo — funcionam direto: `/play https://...`.
-
-## Sistema de addons
-
-Um addon resolve **fontes de mídia**: recebe uma busca em texto livre
-(`/find`) e devolve candidatos que, uma vez escolhidos (via botão inline ou,
-como fallback, `/pick`), viram a `<fonte>` de um `/play` comum — mesma fila,
-mesmo `PlaybackService`, mesmas regras de sanitização. Um addon não sabe nada
-sobre `streaming/`, `telegram/` ou FFmpeg; só fala `search` → `get_streams` →
-uma URL HTTP(S)/HLS/RTMP/RTSP.
-
-Antes de listar os resultados, `AddonService.find()` filtra o que os addons
-devolveram pela relevância ao título buscado: se `TMDBService` está
-habilitado (`TMDB_API_KEY` setado), confirma o filme canônico e descarta
-resultados cujo título não bate (nem com o título traduzido, nem com o
-original); sem TMDB, ou se o TMDB não conhece o título (conteúdo obscuro),
-cai para uma comparação fuzzy direta contra a busca do usuário
-(`app/utils/title_matching.py`, `rapidfuzz`). Uma rede de segurança garante
-que o filtro nunca esconda tudo: se ele zerar a lista, o fallback fuzzy
-tenta de novo sobre os resultados brutos; se isso também zerar, a lista
-bruta é devolvida sem filtro.
-
-### Arquitetura
-
-```
-/find <busca>  ──▶  AddonService.find()  ──▶  AddonManager.search()
-                            │                          │
-                            │           asyncio.gather em paralelo,
-                            │           timeout + isolamento de falha
-                            │           por addon, resultado cacheado (TTL)
-                            │                          ▼
-                            │              addon.search() de cada
-                            │              addon habilitado
-                            ▼
-                    TMDBService.enrich(busca) confirma o filme canônico;
-                    resultados filtrados por título (match TMDB, fallback
-                    fuzzy) — rede de segurança nunca esconde tudo (ver
-                    Sistema de addons). Lista final numerada + botões
-                    inline (com BOT_TOKEN) viram AddonService._last_results.
-
-/pick <número> ──▶  AddonService.pick()  ──▶  AddonManager.get_streams()
-                                                    │
-                                                    ▼
-                                        addon.get_streams(media_id)
-                                                    │
-                                    melhor StreamCandidate.url
-                                                    ▼
-                                        PlaybackService.play(url, ...)
-                                        (mesmo caminho do /play manual)
-```
-
-Cada addon implementa a interface `BaseAddon`
-(`app/addon_system/base.py`): `search(query)`, `get_metadata(media_id)`,
-`get_streams(media_id)` (obrigatórios) e `health()`/`close()` (opcionais, com
-implementação padrão). `AddonManager` carrega addons dinamicamente via
-`importlib` — cada carga/recarga importa `plugin.py` sob um nome de módulo
-único (não reusa `importlib.reload`), então um `/addon reload` nunca deixa
-classes antigas penduradas em memória.
-
-**Isolamento de falha** é o requisito central: um addon que trava, estoura
-timeout (`ADDON_SEARCH_TIMEOUT_SECONDS`/`ADDON_STREAMS_TIMEOUT_SECONDS`) ou
-levanta exceção nunca derruba o processo nem os outros addons — vira log +
-resultado vazio para aquele addon específico, os demais respondem
-normalmente.
-
-### Estrutura de um addon
-
-```
-addons/<nome>/
-  manifest.json   # metadados: name, version, description, entrypoint, min_core_version
-  plugin.py        # implementação de BaseAddon (classe indicada em "entrypoint")
-  README.md         # o que o addon faz, limitações, configuração
-```
-
-`entrypoint` no `manifest.json` é `"<módulo>:<Classe>"` (ex.: `"plugin:Addon"`
-— o padrão, raramente precisa mudar). Config opcional por addon vai em
-`config/addons/<nome>.{json,yaml,yml}` (caminho configurável via
-`ADDONS_CONFIG_PATH`) e chega no addon como `dict` no construtor
-(`BaseAddon.__init__(self, config=None)`) — nunca por variável de ambiente
-própria, para não duplicar o mecanismo de `Settings`.
-
-### Gerenciando addons
-
-- `/addons` — lista os instalados, com estado (habilitado/desabilitado).
-  Whitelist normal (`AUTHORIZED_USER_IDS`).
-- `/addon info <nome>` — versão, descrição, estado, healthcheck ao vivo.
-  Whitelist normal — somente leitura, não muda estado.
-- `/addon enable <nome>` / `/addon disable <nome>` — não afeta addons já
-  carregados, só se participam de `/find`. Estado sobrevive a restart
-  (`ADDONS_STATE_PATH`). **Restrito a `OWNER_USER_ID`.**
-- `/addon reload <nome>` — recarrega `plugin.py` do disco sem reiniciar o
-  processo. Se o reload falhar (erro de sintaxe, exceção no construtor), o
-  addon anterior continua carregado e ativo. **Restrito a `OWNER_USER_ID`.**
-- `/addon uninstall <nome>` — descarrega e **apaga a pasta do addon do
-  disco**. Ação destrutiva, sem confirmação adicional no chat. **Restrito a
-  `OWNER_USER_ID`.**
-
-As quatro ações acima carregam/descarregam ou apagam código Python de
-terceiro no mesmo processo que tem a `SESSION_STRING` — por isso exigem
-`OWNER_USER_ID`, um único `user_id`, mesmo que `AUTHORIZED_USER_IDS=all`
-libere o resto dos comandos para qualquer membro do grupo (ver Segurança).
-
-Instalar um addon novo hoje é manual: colocar a pasta em `addons/<nome>/`
-(local ou via volume Docker) e reiniciar o processo (ou, se `addons_path` já
-existia, o addon só é descoberto em `AddonManager.discover()`, chamado na
-inicialização).
-
-### Addon oficial: `archive_org`
-
-Busca filmes de domínio público / licença aberta no
-[Internet Archive](https://archive.org), usando só a API pública
-(`advancedsearch.php` + `/metadata/`), sem scraping e sem chave. Filtra por
-`mediatype:(movies)` e `licenseurl:(*publicdomain* OR *creativecommons*)` —
-um filtro de curadoria dos próprios metadados do archive.org, não uma
-garantia legal absoluta (itens mal categorizados podem escapar do filtro).
-Detalhes em `addons/archive_org/README.md`.
-
-### Addon oficial: `stremio`
-
-Ponte para addons Stremio externos de terceiros (protocolo HTTP/JSON:
-`/manifest.json`, `/catalog`, `/stream`, `/meta`), consumidos via
-`StremioAddonClient` (`app/services/stremio_client.py`). Não baixa nem
-executa código de terceiros — só fala HTTP com URLs que o operador já
-configurou em `config/addons/stremio.json`. Sem upstreams configurados, o
-addon fica inerte (`/find` não retorna nada dele, `health()` não saudável).
-Streams com URL HTTP(S)/HLS/RTMP/RTSP direta são reproduzidos normalmente;
-streams só com `infoHash`/magnet (torrent sem serviço de debrid, caso comum
-do Torrentio) são resolvidos via qBittorrent — ver
-[Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent).
-Detalhes e exemplo de configuração em `addons/stremio/README.md`.
-
-## Suporte a torrents via qBittorrent
-
-Addons que só devolvem `infoHash`/magnet — sem uma URL HTTP direta — são um
-caso comum quando o addon Stremio configurado (ex.: Torrentio) não tem um
-serviço de debrid por trás. Em vez de descartar esses candidatos, o bot os
-resolve através de uma instância qBittorrent já existente, controlada pela
-Web API (`app/services/qbittorrent_client.py`): adiciona o magnet, aguarda a
-metadata chegar, seleciona o maior arquivo de vídeo (ignora samples e
-arquivos pequenos), aguarda um buffer mínimo baixado e então entrega o
-caminho local do arquivo ao mesmo pipeline de reprodução usado por qualquer
-arquivo local (`app/services/torrent_service.py`).
-
-**Sem cópia, sem arquivo temporário**: o FFmpeg lê o arquivo direto de onde
-o qBittorrent está gravando, ainda em download (`sequentialDownload` +
-`firstLastPiecePrio` são sempre habilitados ao adicionar o torrent, para que
-o início do arquivo esteja disponível assim que o buffer mínimo for
-atingido). Isso só funciona se `QBITTORRENT_SAVE_PATH` for um caminho
-**acessível localmente pelo processo do bridge** — mesma máquina, ou mesmo
-volume compartilhado em Docker. `QBITTORRENT_HOST`/`QBITTORRENT_PORT`
-apontam para onde a Web API responde (pode estar em outro host), mas o
-**disco** de download precisa ser visível localmente; recomenda-se manter
-`QBITTORRENT_SAVE_PATH` como um subdiretório de `MEDIA_PATH`. Em Docker,
-isso significa montar o mesmo volume de mídia no container do qBittorrent.
-
-Se a metadata ou o buffer mínimo não chegarem dentro de `TORRENT_TIMEOUT_SECONDS`,
-o candidato falha: em `/pick` (comando) o bot tenta o próximo candidato da
-lista automaticamente; no botão de `/find` (que já resolveu um candidato
-específico por addon) não há fallback — a interação mostra um alerta pedindo
-para buscar de novo. Sem uma instância qBittorrent configurada e acessível,
-todo candidato só-torrent falha da mesma forma.
-
-Por padrão o torrent continua semeando após o fim da reprodução (para não
-prejudicar a "saúde" do torrent na rede); `REMOVE_TORRENT_AFTER_PLAY=true`
-remove o torrent (e os arquivos baixados) assim que a reprodução passa para
-outra fonte.
-
-### O que **não** existe (de propósito)
-
-Não há "loja de addons" (`/addon store`, `/addon install <nome>` baixando de
-um índice remoto) nem instalação por chat a partir de zip/URL/repositório
-Git. Isso foi cogitado no design original, mas **deliberadamente adiado**:
-instalar e executar código de terceiros a partir de um comando de chat é a
-parte de maior risco de todo o sistema de addons (execução arbitrária de
-código no mesmo processo que tem a `SESSION_STRING`), e não deve ser
-implementado sem uma decisão explícita de modelo de confiança (índice
-controlado só por mim vs. aceitar PRs de terceiros com checksum obrigatório
-vs. não ter índice remoto nenhum, só deploy manual). Hoje, instalar um addon
-é sempre manual (seção acima) — nunca a partir de um comando enviado no
-Telegram.
-
-## Configuração
-
-Copie `.env.example` para `.env` e preencha:
+2. Crie a configuração:
 
 ```bash
 cp .env.example .env
 ```
 
-| Variável | Obrigatória | Descrição |
-|---|---|---|
-| `API_ID`, `API_HASH` | sim | De https://my.telegram.org |
-| `SESSION_STRING` | sim | String de sessão Pyrogram/Kurigram (ver abaixo) |
-| `CHAT_ID` | sim | Chat/grupo onde a chamada acontece |
-| `STREAM_CHAT_ID` | não | Canal que recebe a live; administradores também podem controlar o bot no privado. Vazio mantém `CHAT_ID` como destino |
-| `AUTHORIZED_USER_IDS` | não (mas fica inutilizável sem) | `user_id` separados por vírgula, ou `all` para qualquer membro atual do grupo em `CHAT_ID` |
-| `OWNER_USER_ID` | não (mas ninguém gerencia addons sem) | `user_id` autorizado a `/addon enable\|disable\|reload\|uninstall` — restrito a um único operador mesmo com `AUTHORIZED_USER_IDS=all` (ver Segurança) |
-| `LOG_LEVEL`, `LOG_DIR`, `LOG_ROTATION`, `LOG_RETENTION` | não | ver seção Logs |
-| `FFMPEG_PATH`, `MEDIA_PATH` | não | padrão: `ffmpeg` no PATH, pasta `media/` |
-| `FFMPEG_MAX_CONCURRENT` | não | máx. processos FFmpeg simultâneos (v1: 1) |
-| `FFMPEG_HEALTHCHECK_INTERVAL_SECONDS` | não | intervalo do log de healthcheck |
-| `FFMPEG_TERMINATE_TIMEOUT_SECONDS` | não | prazo p/ SIGTERM antes de SIGKILL |
-| `QUEUE_MAX_ITEMS` | não | limite de itens na fila (padrão 50) |
-| `QUEUE_DATA_PATH` | não | onde persistir a fila (padrão `data/queue.json`) |
-| `RETRY_BASE_DELAY_SECONDS`, `RETRY_MAX_DELAY_SECONDS`, `RETRY_MAX_ATTEMPTS`, `RETRY_JITTER_SECONDS` | não | ver Política de retry |
-| `ADDONS_PATH` | não | pasta com os addons instalados (padrão `addons/`) |
-| `ADDONS_STATE_PATH` | não | onde persistir habilitado/desabilitado por addon (padrão `data/addons_state.json`) |
-| `ADDONS_CONFIG_PATH` | não | pasta com config própria de cada addon (padrão `config/addons/`) |
-| `ADDON_SEARCH_TIMEOUT_SECONDS`, `ADDON_STREAMS_TIMEOUT_SECONDS` | não | timeout por addon em `/find`/`/pick` (padrão 10s cada) |
-| `ADDON_SEARCH_CACHE_TTL_SECONDS` | não | TTL do cache de resultados de `/find` (padrão 300s) |
-| `TMDB_API_KEY` | não | ativa metadados (pôster/sinopse/nota) e o filtro por título em `/find`; vazio desativa a integração (filtro cai para fuzzy-vs-busca) |
-| `TMDB_LANGUAGE`, `TMDB_REQUEST_TIMEOUT_SECONDS` | não | idioma dos metadados (padrão `pt-BR`) e timeout da requisição TMDB |
-| `BOT_TOKEN` | não | token do bot (BotFather) para `/find`/`/pick` com botões inline reais como forma primária de escolha; vazio mantém o fallback de texto puro no client de sessão (ver [Sistema de addons](#sistema-de-addons)) |
-| `QBITTORRENT_HOST`, `QBITTORRENT_PORT` | não | endereço da Web API do qBittorrent (padrão `localhost:8080`) |
-| `QBITTORRENT_USERNAME`, `QBITTORRENT_PASSWORD` | não | credenciais da Web API do qBittorrent (padrão `admin`/vazio) |
-| `QBITTORRENT_CATEGORY` | não | categoria aplicada aos torrents adicionados pelo bot, se definida |
-| `QBITTORRENT_SAVE_PATH` | não | diretório de download dos torrents — precisa ser acessível localmente pelo bridge (padrão `media/torrents`, ver [Suporte a torrents via qBittorrent](#suporte-a-torrents-via-qbittorrent)) |
-| `TORRENT_BUFFER_MB` | não | buffer mínimo (MB) baixado antes de liberar ao FFmpeg (padrão 50) |
-| `TORRENT_TIMEOUT_SECONDS` | não | prazo (s) para metadata/buffer antes de desistir do candidato (padrão 60) |
-| `REMOVE_TORRENT_AFTER_PLAY` | não | remove o torrent do qBittorrent ao fim da reprodução (padrão `false`, mantém em seed) |
+No PowerShell:
 
-Nunca versione `.env` (já está no `.gitignore`). `API_HASH`,
-`SESSION_STRING`, `TMDB_API_KEY`, `BOT_TOKEN` e `QBITTORRENT_PASSWORD` são mascarados em
-todo log (`***MASKED***`) e nunca aparecem em texto plano em nenhum arquivo
-de log.
-
-### Gerando o `SESSION_STRING`
-
-Com Kurigram instalado localmente (`uv sync` já traz), rode uma vez:
-
-```bash
-uv run python scripts/generate_session.py
+```powershell
+Copy-Item .env.example .env
 ```
 
-O script pede `API_ID`/`API_HASH`, depois número de telefone, código de
-login enviado pelo Telegram e, se a conta tiver 2FA, a senha — ao final,
-imprime a `SESSION_STRING` para colar em `.env` (nunca a salva em disco).
+3. Preencha pelo menos:
 
-Use uma conta com permissão para participar de chamadas no grupo/canal alvo.
-Essa é a **mesma conta** que recebe os comandos do bot (ver arquitetura —
-`bot/` e `telegram/` compartilham a mesma sessão Pyrogram, não abrem duas).
+```dotenv
+API_ID=
+API_HASH=
+SESSION_STRING=
+CHAT_ID=
+STREAM_CHAT_ID=
+OWNER_USER_ID=
+BOT_TOKEN=
+TMDB_API_KEY=
 
-## Logs
+QBITTORRENT_HOST=host.docker.internal
+QBITTORRENT_PORT=8080
+QBITTORRENT_USERNAME=admin
+QBITTORRENT_PASSWORD=
+QBITTORRENT_SAVE_PATH=E:/Backup/Filmes
+QBITTORRENT_LOCAL_PATH=/app/media/torrents
+TORRENT_BUFFER_MB=300
+TORRENT_TIMEOUT_SECONDS=600
+REMOVE_TORRENT_AFTER_PLAY=true
+```
 
-Quatro arquivos em `LOG_DIR` (padrão `logs/`), rotacionados por
-`LOG_ROTATION`/retidos por `LOG_RETENTION` (padrão: 10 MB / 7 dias):
+`QBITTORRENT_SAVE_PATH` é o caminho visto pelo Windows e pelo qBittorrent.
+`QBITTORRENT_LOCAL_PATH` é o mesmo diretório visto de dentro do container.
 
-- `bot.log` — comandos e respostas
-- `stream.log` — player, streaming (FFmpeg) e telegram (chamada)
-- `ffmpeg.log` — saída bruta do processo FFmpeg (stdout/stderr)
-- `errors.log` — todo registro ERROR+ agregado, qualquer componente
+4. Gere a sessão da conta comum:
 
-## Resiliência
+```bash
+uv sync
+uv run python -u scripts/generate_session.py
+```
 
-- **Processo principal nunca morre por exceção não tratada**: exceções de
-  handler são capturadas pelo próprio Pyrogram; exceções em tasks de
-  background são capturadas por um `loop.set_exception_handler` e logadas em
-  `errors.log`.
-- **FFmpeg cai** → `FFmpegStreamer` detecta a saída inesperada e reinicia
-  automaticamente com a mesma fonte, com backoff exponencial + jitter.
-- **Chamada cai** (kick, saída forçada, fim de stream) → `TelegramCallManager`
-  detecta via update do `py-tgcalls` e reconecta automaticamente com a última
-  fonte conhecida, mesma política de retry.
-- **Falha permanente** (esgotou as tentativas): loga em `errors.log`, marca
-  `/status` como degradado com o motivo, e — no caso do FFmpeg — pausa a
-  chamada em vez de deixá-la travada numa imagem congelada. Não crasha o
-  processo; requer intervenção do operador (`/skip`, `/play` outra fonte, ou
-  reiniciar o processo).
+Cole o valor gerado em `SESSION_STRING`. Nunca publique essa string: ela dá
+acesso à conta autenticada.
 
-### Política de retry
+Para descobrir `CHAT_ID`, `STREAM_CHAT_ID` e o ID da conta humana que operará o
+bot, informe o `@username` dessa pessoa:
 
-Backoff exponencial com jitter, mesma política para reconexão de chamada e
-de FFmpeg (`app/utils/retry.py`): `delay = min(RETRY_BASE_DELAY_SECONDS *
-2^(tentativa-1), RETRY_MAX_DELAY_SECONDS) + jitter_aleatório(0,
-RETRY_JITTER_SECONDS)`. Após `RETRY_MAX_ATTEMPTS` tentativas sem sucesso,
-marca falha permanente e alerta (ver acima). Padrões: 2s base, 60s teto, 8
-tentativas, 1s de jitter.
+```bash
+uv run python scripts/list_chats.py @username_do_operador
+```
+
+Use o valor `OWNER_USER_ID` exibido, não o `SESSION_ACCOUNT_ID` da conta
+dedicada. O operador precisa ter iniciado uma conversa com a conta dedicada ou
+compartilhar um grupo/canal acessível a ela.
+
+5. Adicione a conta comum e o bot como administradores do canal. A conta comum
+precisa poder gerenciar transmissões ao vivo.
+
+6. Suba o serviço:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+7. Abra o bot no privado. Administradores recebem o manual de comandos no
+primeiro contato. Usuários sem permissão recebem uma recusa e seus comandos não
+são executados.
+
+## Comandos principais
+
+| Comando | Função |
+|---|---|
+| `/find <filme>` | Pesquisa filmes e abre o catálogo interativo |
+| `/canal <filme>` | Pesquisa vídeos já publicados no canal |
+| `/play <arquivo ou URL>` | Adiciona uma fonte direta à fila |
+| `/pause` / `/resume` | Pausa ou retoma RTMP/PyTgCalls |
+| `/stop` / `/skip` | Encerra o item atual ou avança a fila |
+| `/restart` | Reinicia o filme atual |
+| `/volume <0-200>` | Ajusta o volume |
+| `/queue` / `/clear` | Consulta ou limpa itens pendentes |
+| `/remove <posição>` | Remove um item pendente |
+| `/loop <off\|item\|queue>` | Configura repetição |
+| `/legenda on\|off` | Liga ou desliga a legenda disponível |
+| `/subdelay <ms>` | Corrige sincronização da legenda |
+| `/nowplaying` / `/status` | Exibe reprodução e saúde do serviço |
+
+Filmes identificados como dublados, nacionais ou em português não recebem
+legenda automática. Em fontes `Dual Áudio`, a legenda é mantida por segurança.
+
+## Armazenamento
+
+O desenho recomendado mantém vídeos e legendas no HD externo:
+
+```text
+E:/Backup/Filmes/
+├── <downloads do qBittorrent>
+├── channel/       # cópias progressivas vindas do canal
+└── .subtitles/    # legendas temporárias
+```
+
+O FFmpeg começa após o buffer configurado e lê o mesmo arquivo que ainda está
+sendo baixado. Ao terminar, pular ou parar a reprodução, o serviço libera a
+fonte e remove os arquivos temporários conforme a configuração.
+
+## Desenvolvimento
+
+```bash
+uv sync --all-groups
+uv run ruff check app tests
+uv run black --check app tests
+uv run mypy
+uv run pytest
+```
+
+A suíte possui mais de 500 testes. A configuração de CI exige cobertura mínima
+de 90%; novos fluxos devem incluir testes de regressão.
+
+## Documentação completa
+
+Consulte [docs/MANUAL.md](docs/MANUAL.md) para:
+
+- preparação das contas e permissões do Telegram;
+- configuração variável por variável;
+- instalação do qBittorrent e armazenamento no HD;
+- arquitetura e ciclo completo de reprodução;
+- RTMP, fallback, legendas, TMDB e addons;
+- operação, atualização, backup, testes e troubleshooting;
+- instruções para replicar o projeto em outra máquina ou canal.
 
 ## Segurança
 
-- Nenhuma credencial hardcoded — tudo via `.env`/`Settings`.
-- `SESSION_STRING`/`API_HASH`/`TMDB_API_KEY`/`BOT_TOKEN`/`QBITTORRENT_PASSWORD`
-  mascarados em logs.
-- Entrada de `/play` validada antes de chegar ao FFmpeg
-  (`app/utils/sanitize.py`): rejeita entradas que comecem com `-` (evita
-  injeção de flags), caracteres de controle, esquemas de URL não suportados,
-  e caminhos locais fora de `MEDIA_PATH`. O processo FFmpeg é sempre criado
-  via `asyncio.create_subprocess_exec` com uma lista de argumentos — nunca
-  `shell=True`, nunca uma string concatenada.
-- Limite configurável de itens na fila (`QUEUE_MAX_ITEMS`) e de processos
-  FFmpeg simultâneos (`FFMPEG_MAX_CONCURRENT`).
-- Whitelist de `user_id` (`AUTHORIZED_USER_IDS`) para todo comando de
-  controle — ver tabela de comandos.
-- Addons rodam no mesmo processo (sem sandbox) e são código Python arbitrário
-  — por isso não há instalação de addon via chat (ver "O que não existe, de
-  propósito" na seção de addons). Instalar um addon hoje exige acesso ao
-  filesystem/deploy, o mesmo nível de confiança já exigido para editar
-  `.env` ou o código do bot.
-- Gerenciar addons já instalados (`/addon enable|disable|reload|uninstall`)
-  fica restrito a `OWNER_USER_ID` — um único `user_id`, separado da whitelist
-  geral de `AUTHORIZED_USER_IDS` (que pode ser `all`, ou seja, qualquer
-  membro do grupo). Sem essa separação, qualquer membro autorizado a tocar
-  vídeo também poderia desabilitar/recarregar código de terceiro no mesmo
-  processo que guarda a `SESSION_STRING`. `/addon info` (somente leitura)
-  continua disponível a qualquer usuário autorizado.
-
-## Execução local
-
-Requer Python 3.13+, [uv](https://docs.astral.sh/uv/) e FFmpeg instalado no
-PATH.
-
-```bash
-cp .env.example .env   # preencha as variáveis
-uv sync
-uv run python -m app.main
-```
-
-## Execução via Docker
-
-```bash
-cp .env.example .env   # preencha as variáveis
-docker compose up -d
-docker compose logs -f
-```
-
-`docker compose up` sobe a aplicação funcional sem passos manuais além de
-preencher o `.env` — a imagem já traz FFmpeg instalado. Volumes nomeados
-(`logs`, `media`, `data`) persistem entre restarts do container.
-
-## Deploy / atualização
-
-```bash
-git pull
-docker compose up -d --build   # reconstrói a imagem e reinicia
-```
-
-A fila (`data/queue.json`) sobrevive ao restart do container. Se havia um filme
-em reprodução, o processo retoma o item e entra novamente na chamada ao subir.
-
-## Solução de problemas
-
-**`/status` mostra "Degradado"** — FFmpeg ou a chamada esgotaram as
-tentativas de reconexão automática. Veja o motivo na própria resposta e em
-`errors.log`. Tente `/skip` (próximo item), `/play` (nova fonte) ou `/stop` +
-`/play` de novo.
-
-**`/play` responde "Fonte inválida"** — a URL usa um esquema não suportado
-(só http/https/hls/rtmp/rtsp), o arquivo local não existe em `MEDIA_PATH`,
-ou a extensão não é uma das suportadas (`.mp4`, `.mkv`, `.avi`, `.mov`). Com
-Docker, lembre que `media/` é um volume nomeado — veja "Como adicionar
-vídeos".
-
-**Nenhum comando responde** — confira se o `user_id` está em
-`AUTHORIZED_USER_IDS` (comandos de controle) e se `docker compose logs`
-mostra o processo rodando sem traceback na inicialização (geralmente
-`SESSION_STRING`/`API_ID`/`API_HASH` inválidos ou expirados).
-
-**`ImportError` envolvendo `pyrogram`** — confirme que só `kurigram` está
-instalado (`uv pip list | grep -i gram`), não o pacote `pyrogram` oficial
-junto — os dois conflitam no mesmo caminho de import. `uv sync` a partir do
-`uv.lock` deste repositório já resolve isso corretamente.
-
-**FFmpeg não encontrado** — confirme `FFMPEG_PATH` (padrão: espera `ffmpeg`
-no `PATH`) e que o binário está instalado. Na imagem Docker já vem incluso.
-
-## FAQ
-
-**Por que não usar a API de Bot padrão do Telegram (BotFather) em vez de uma
-conta de usuário?** Chamadas de grupo (MTProto group calls) exigem uma sessão
-de usuário — bots comuns não conseguem participar de chamadas de vídeo.
-
-**Por que os pipes nomeados em vez de deixar o `py-tgcalls` rodar o FFmpeg
-dele mesmo internamente?** O `py-tgcalls` sabe fazer isso (modo "shell"), mas
-aí perderíamos controle direto do processo — sem `healthcheck()` nosso, sem
-`ffmpeg.log` próprio, sem reinício sob nossa política de retry. Os pipes
-mantêm `streaming/` e `telegram/` desacopladas como a arquitetura pede, com
-`FFmpegStreamer` sendo o dono real do processo.
-
-**Dá pra rodar mais de uma chamada ao mesmo tempo?** Não na v1 — decisão
-deliberada de escopo (`FFMPEG_MAX_CONCURRENT` existe para o futuro, mas hoje
-só uma sessão é suportada).
-
-**Por que Kurigram e não Hydrogram, já que os dois são forks mantidos do
-Pyrogram?** Hydrogram foi cogitado primeiro (também citado como extra oficial
-do `py-tgcalls`), mas ele instala sob o namespace `hydrogram`, não
-`pyrogram` — e o adapter interno do `py-tgcalls` (`mtproto_client.py`)
-detecta o cliente pelo nome do módulo (`pyrogram` ou `telethon`); um cliente
-Hydrogram cai no `else` e levanta `InvalidMTProtoClient`, testado neste
-projeto. Kurigram resolve isso por reusar o namespace `pyrogram` de verdade.
+- `.env`, `SESSION_STRING`, tokens e senhas nunca devem ser versionados;
+- addons executam Python no processo principal e devem vir de fontes confiáveis;
+- gerenciamento destrutivo de addons é restrito a `OWNER_USER_ID`;
+- fontes locais são confinadas ao diretório de mídia permitido;
+- o FFmpeg é iniciado sem shell e recebe argumentos já validados.
