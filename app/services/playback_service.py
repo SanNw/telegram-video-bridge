@@ -50,6 +50,8 @@ class PlaybackService:
         self._degraded_reason: str | None = None
         self._started_at: datetime | None = None
         self._current_started_at: datetime | None = None
+        self._paused_at_seconds: float | None = None
+        self._volume = 100
         self._source_released_callbacks: list[Callable[[MediaSource], Awaitable[None]]] = []
 
         self._streamer.set_completion_callback(self._handle_item_completed)
@@ -68,8 +70,15 @@ class PlaybackService:
         self._source_released_callbacks.append(callback)
 
     async def _handle_source_released(self, source: MediaSource) -> None:
-        for callback in self._source_released_callbacks:
-            await callback(source)
+        results = await asyncio.gather(
+            *(callback(source) for callback in self._source_released_callbacks),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                _logger.opt(exception=result).error(
+                    "Falha ao liberar uma fonte de mídia; as demais limpezas continuaram."
+                )
 
     @property
     def client(self) -> Client:
@@ -132,20 +141,38 @@ class PlaybackService:
             if not self._is_active:
                 next_item = await self._queue.advance()
                 if next_item is not None:
-                    await self._start_or_switch_locked(next_item)
+                    try:
+                        await self._start_or_switch_locked(next_item)
+                    except Exception:
+                        try:
+                            await self._streamer.stop()
+                        finally:
+                            await self._queue.discard_current()
+                        raise
         return position
 
     async def pause(self) -> None:
         """Pausa a chamada. Levanta `NothingPlayingError` se nada estiver tocando."""
         if not self._is_active:
             raise NothingPlayingError("Nada está tocando no momento.")
-        await self._call_manager.pause_call()
+        if self._call_manager.rtmp_active:
+            self._paused_at_seconds = self._elapsed_seconds()
+            await self._streamer.stop(notify_release=False)
+        else:
+            await self._call_manager.pause_call()
 
     async def resume(self) -> None:
         """Retoma uma chamada pausada. Levanta `NothingPlayingError` se nada estiver tocando."""
         if not self._is_active:
             raise NothingPlayingError("Nada está tocando no momento.")
-        await self._call_manager.resume_call()
+        if self._call_manager.rtmp_active and self._paused_at_seconds is not None:
+            current = self._queue.snapshot().current
+            if current is None:
+                raise NothingPlayingError("Nada está tocando no momento.")
+            await self._restart_rtmp_locked(current, self._paused_at_seconds)
+            self._paused_at_seconds = None
+        else:
+            await self._call_manager.resume_call()
 
     async def stop_playback(self) -> None:
         """Para a reprodução atual e sai da chamada. Não limpa a fila pendente."""
@@ -192,7 +219,14 @@ class PlaybackService:
             raise NothingPlayingError("Nada está tocando no momento.")
         if not 0 <= volume <= 200:
             raise InvalidVolumeError("Volume deve estar entre 0 e 200.")
-        await self._call_manager.change_volume(volume)
+        self._volume = volume
+        if self._call_manager.rtmp_active:
+            current = self._queue.snapshot().current
+            if current is None:
+                raise NothingPlayingError("Nada está tocando no momento.")
+            await self._restart_rtmp_locked(current, self._elapsed_seconds())
+        else:
+            await self._call_manager.change_volume(volume)
 
     async def restart_current(self) -> None:
         """Reinicia o item atual do zero (mesma fonte). `NothingPlayingError` se ocioso."""
@@ -223,7 +257,12 @@ class PlaybackService:
             _logger.warning("RTMP indisponível ao ajustar legenda: {err}", err=exc)
             output_url = None
         await self._streamer.change_source(
-            current.source, output_url, current.subtitle_path, delay_ms, elapsed
+            current.source,
+            output_url,
+            current.subtitle_path,
+            delay_ms,
+            elapsed,
+            self._volume,
         )
         self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
 
@@ -248,6 +287,7 @@ class PlaybackService:
             current.subtitle_path if enabled else None,
             current.subtitle_delay_ms,
             elapsed,
+            self._volume,
         )
         self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
 
@@ -285,10 +325,16 @@ class PlaybackService:
         try:
             output_url = await self._call_manager.prepare_rtmp()
             if subtitle_path is None:
-                await self._streamer.change_source(item.source, output_url)
+                await self._streamer.change_source(
+                    item.source, output_url, volume_percent=self._volume
+                )
             else:
                 await self._streamer.change_source(
-                    item.source, output_url, subtitle_path, item.subtitle_delay_ms
+                    item.source,
+                    output_url,
+                    subtitle_path,
+                    item.subtitle_delay_ms,
+                    volume_percent=self._volume,
                 )
             _logger.info("Reprodução iniciada por RTMP.")
         except Exception as exc:
@@ -311,12 +357,31 @@ class PlaybackService:
         self._degraded = False
         self._degraded_reason = None
         self._current_started_at = datetime.now(UTC)
+        self._paused_at_seconds = None
 
     async def _stop_active_locked(self) -> None:
         await self._streamer.stop()
         await self._call_manager.leave_call()
         self._is_active = False
         self._current_started_at = None
+        self._paused_at_seconds = None
+
+    def _elapsed_seconds(self) -> float:
+        if self._current_started_at is None:
+            return 0.0
+        return max(0.0, (datetime.now(UTC) - self._current_started_at).total_seconds())
+
+    async def _restart_rtmp_locked(self, item: QueueItem, elapsed: float) -> None:
+        output_url = await self._call_manager.prepare_rtmp()
+        await self._streamer.change_source(
+            item.source,
+            output_url,
+            item.subtitle_path if item.subtitles_enabled else None,
+            item.subtitle_delay_ms,
+            elapsed,
+            self._volume,
+        )
+        self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
 
     async def _handle_item_completed(self) -> None:
         async with self._lock:

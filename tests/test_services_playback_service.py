@@ -87,6 +87,8 @@ class _FakeStreamer:
         self._on_completion: Callable[[], object] | None = None
         self._on_permanent_failure: Callable[[], object] | None = None
         self._on_source_released: Callable[[MediaSource], object] | None = None
+        self.change_calls: list[tuple[object, ...]] = []
+        self.change_exception: Exception | None = None
 
     def set_completion_callback(self, callback: Callable[[], object]) -> None:
         self._on_completion = callback
@@ -94,13 +96,14 @@ class _FakeStreamer:
     def set_permanent_failure_callback(self, callback: Callable[[], object]) -> None:
         self._on_permanent_failure = callback
 
-    def set_source_released_callback(
-        self, callback: Callable[[MediaSource], object]
-    ) -> None:
+    def set_source_released_callback(self, callback: Callable[[MediaSource], object]) -> None:
         self._on_source_released = callback
 
-    async def change_source(self, source: MediaSource) -> None:
+    async def change_source(self, source: MediaSource, *args: object) -> None:
+        if self.change_exception is not None:
+            raise self.change_exception
         self.started_sources.append(source)
+        self.change_calls.append((source, *args))
         self.stopped = False
         self.state = FFmpegProcessState.RUNNING
 
@@ -133,6 +136,8 @@ class _FakeCallManager:
         self.volume: int | None = None
         self.client = MagicMock()
         self._on_permanent_failure: Callable[[], object] | None = None
+        self.rtmp_active = False
+        self.rtmp_url = "rtmps://telegram/live/key"
 
     def set_permanent_failure_callback(self, callback: Callable[[], object]) -> None:
         self._on_permanent_failure = callback
@@ -150,6 +155,11 @@ class _FakeCallManager:
     async def join_call(self, video_pipe: Path, audio_pipe: Path) -> None:
         self.joined.append((video_pipe, audio_pipe))
         self.left = False
+
+    async def prepare_rtmp(self) -> str:
+        if not self.rtmp_active:
+            raise RuntimeError("RTMP indisponível")
+        return self.rtmp_url
 
     async def pause_call(self) -> None:
         self.paused = True
@@ -246,6 +256,23 @@ async def test_pause_resume_delegate_to_call_manager(
     assert call.paused is True
     await service.resume()
     assert call.paused is False
+
+
+async def test_pause_resume_rtmp_stops_and_restarts_from_elapsed_position(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    _, streamer, call = _fakes(service)
+    call.rtmp_active = True
+    await _play_one(service, tmp_path)
+
+    await service.pause()
+    assert streamer.stopped is True
+
+    await service.resume()
+    assert streamer.stopped is False
+    assert streamer.change_calls[-1][1] == call.rtmp_url
+    assert streamer.change_calls[-1][4] >= 0
 
 
 async def test_stop_playback_raises_when_nothing_playing(
@@ -534,6 +561,58 @@ async def test_set_volume_success(
     await service.set_volume(150)
     _, _, call = _fakes(service)
     assert call.volume == 150
+
+
+async def test_set_volume_restarts_rtmp_with_ffmpeg_volume(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    _, streamer, call = _fakes(service)
+    call.rtmp_active = True
+    await _play_one(service, tmp_path)
+
+    await service.set_volume(150)
+
+    assert streamer.change_calls[-1][-1] == 150
+    assert call.volume is None
+
+
+async def test_failed_initial_start_discards_current_item(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    queue_manager, streamer, _ = _fakes(service)
+    streamer.change_exception = RuntimeError("falha no FFmpeg")
+    media_dir = tmp_path / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / "a.mp4").write_bytes(b"x")
+
+    with pytest.raises(RuntimeError, match="falha no FFmpeg"):
+        await service.play("a.mp4", requested_by=1)
+
+    assert queue_manager.current is None
+    assert streamer.stopped is True
+
+
+async def test_source_cleanup_continues_when_one_callback_fails(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    cleaned: list[str] = []
+
+    async def fail(_source: MediaSource) -> None:
+        raise RuntimeError("falha de limpeza")
+
+    async def succeed(source: MediaSource) -> None:
+        cleaned.append(source.raw)
+
+    service.set_source_released_callback(fail)
+    service.set_source_released_callback(succeed)
+    source = MediaSource(str(tmp_path / "a.mp4"), SourceType.LOCAL_FILE)
+
+    await service._handle_source_released(source)  # noqa: SLF001
+
+    assert cleaned == [source.raw]
 
 
 async def test_restart_current_raises_when_nothing_playing(

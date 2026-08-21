@@ -35,7 +35,9 @@ from app.utils.retry import RetryExhaustedError, RetryPolicy, retry_with_backoff
 
 _logger = get_logger("telegram")
 _AUDIO_PARAMETERS = AudioParameters(bitrate=AUDIO_SAMPLE_RATE, channels=AUDIO_CHANNELS)
-_VIDEO_PARAMETERS = VideoParameters(width=VIDEO_WIDTH, height=VIDEO_HEIGHT, frame_rate=VIDEO_FPS, adjust_by_height=False)
+_VIDEO_PARAMETERS = VideoParameters(
+    width=VIDEO_WIDTH, height=VIDEO_HEIGHT, frame_rate=VIDEO_FPS, adjust_by_height=False
+)
 
 
 class TelegramCallManager:
@@ -57,6 +59,7 @@ class TelegramCallManager:
         self._reconnect_count = 0
         self._last_error: str | None = None
         self._last_pipes: tuple[Path, Path] | None = None
+        self._rtmp_active = False
         self._started = False
         self._on_permanent_failure: Callable[[], Awaitable[None]] | None = None
         self._register_handlers()
@@ -91,6 +94,8 @@ class TelegramCallManager:
 
     async def prepare_rtmp(self) -> str:
         """Obtém o ingest RTMP; qualquer falha é tratada pelo serviço como fallback."""
+        if self._last_pipes is not None:
+            await self.leave_call()
         self._state = CallState.CONNECTING
         peer = await self._client.resolve_peer(self._chat_id)
         try:
@@ -102,11 +107,13 @@ class TelegramCallManager:
         if not isinstance(endpoint, GroupCallStreamRtmpUrl):
             raise RuntimeError("O Telegram não retornou um endpoint RTMP válido.")
         self._state = CallState.CONNECTED
+        self._rtmp_active = True
         self._last_error = None
         _logger.info("Endpoint RTMP preparado no chat {chat_id}.", chat_id=self._chat_id)
         return f"{endpoint.url.rstrip('/')}/{endpoint.key.lstrip('/')}"
 
     async def join_call(self, video_pipe: Path, audio_pipe: Path) -> None:
+        self._rtmp_active = False
         self._state = CallState.CONNECTING
         try:
             await self._play(video_pipe, audio_pipe)
@@ -127,8 +134,12 @@ class TelegramCallManager:
     async def _play(self, video_pipe: Path, audio_pipe: Path) -> None:
         async with self._lock:
             stream = Stream(
-                microphone=AudioStream(MediaSource.SHELL, shlex.join(["cat", "--", str(audio_pipe)]), _AUDIO_PARAMETERS),
-                camera=VideoStream(MediaSource.SHELL, shlex.join(["cat", "--", str(video_pipe)]), _VIDEO_PARAMETERS),
+                microphone=AudioStream(
+                    MediaSource.SHELL, shlex.join(["cat", "--", str(audio_pipe)]), _AUDIO_PARAMETERS
+                ),
+                camera=VideoStream(
+                    MediaSource.SHELL, shlex.join(["cat", "--", str(video_pipe)]), _VIDEO_PARAMETERS
+                ),
             )
             await self._call_py.play(self._chat_id, stream)
             self._last_pipes = (video_pipe, audio_pipe)
@@ -147,12 +158,14 @@ class TelegramCallManager:
 
     async def leave_call(self) -> None:
         async with self._lock:
+            self._last_pipes = None
+            self._rtmp_active = False
             with contextlib.suppress(NotInCallError, NoActiveGroupCall):
                 await self._call_py.leave_call(self._chat_id)
             self._state = CallState.DISCONNECTED
 
     async def _on_disconnected(self, _update: Update) -> None:
-        if self._state == CallState.RECONNECTING:
+        if self._state == CallState.RECONNECTING or self._last_pipes is None:
             return
         self._state = CallState.RECONNECTING
         await self.reconnect()
@@ -186,6 +199,10 @@ class TelegramCallManager:
     @property
     def client(self) -> Client:
         return self._client
+
+    @property
+    def rtmp_active(self) -> bool:
+        return self._rtmp_active
 
     def healthcheck(self) -> CallHealth:
         return CallHealth(self._state, self._chat_id, self._reconnect_count, self._last_error)

@@ -9,7 +9,7 @@ from pathlib import Path
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-from app.bot.auth import is_authorized
+from app.bot.auth import is_stream_admin
 from app.bot.handlers.info import HELP_TEXT
 from app.config.settings import Settings
 
@@ -57,7 +57,7 @@ def register(
         if user is None:
             return
         async with lock:
-            authorized = await is_authorized(settings, client, user.id)
+            authorized = await is_stream_admin(settings, client, user.id)
             bucket = "admins" if authorized else "denied"
             if user.id in seen[bucket]:
                 return

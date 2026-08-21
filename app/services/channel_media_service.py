@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,7 +73,11 @@ class ChannelMediaService:
         media = message.video or message.document
         assert media is not None
         filename = Path(media.file_name or f"channel-{message_id}.mp4").name
-        destination = self._settings.qbittorrent_local_path / "channel" / f"{message_id}-{filename}"
+        destination = (
+            self._settings.qbittorrent_local_path
+            / "channel"
+            / f"{message_id}-{time.time_ns()}-{filename}"
+        )
         destination.parent.mkdir(parents=True, exist_ok=True)
         ready = asyncio.Event()
         task = asyncio.create_task(self._download(message, destination, ready))
@@ -83,16 +88,19 @@ class ChannelMediaService:
                 if task.done():
                     task.result()
         except Exception:
-            task.cancel()
-            destination.unlink(missing_ok=True)
+            await self._discard_download(destination)
             raise
         _logger.info("Buffer do canal atingido: {path}", path=destination)
-        subtitle_path = None
-        if not has_portuguese_audio(movie.title):
-            imdb_id = await self._tmdb.find_imdb_id(movie.title)
-            if imdb_id is not None:
-                subtitle_path = await self._addons.prepare_subtitle(imdb_id, movie.title)
-        return await self._playback.play(str(destination), requested_by, subtitle_path)
+        try:
+            subtitle_path = None
+            if not has_portuguese_audio(movie.title):
+                imdb_id = await self._tmdb.find_imdb_id(movie.title)
+                if imdb_id is not None:
+                    subtitle_path = await self._addons.prepare_subtitle(imdb_id, movie.title)
+            return await self._playback.play(str(destination), requested_by, subtitle_path)
+        except Exception:
+            await self._discard_download(destination)
+            raise
 
     async def release(self, source: MediaSource) -> None:
         task = self._downloads.pop(source.raw, None)
@@ -104,9 +112,20 @@ class ChannelMediaService:
         _logger.info("Arquivo temporário do canal removido: {path}", path=source.raw)
 
     async def close(self) -> None:
-        for task in self._downloads.values():
+        downloads = list(self._downloads.items())
+        for _, task in downloads:
             task.cancel()
-        await asyncio.gather(*self._downloads.values(), return_exceptions=True)
+        await asyncio.gather(*(task for _, task in downloads), return_exceptions=True)
+        for path, _ in downloads:
+            Path(path).unlink(missing_ok=True)
+        self._downloads.clear()
+
+    async def _discard_download(self, destination: Path) -> None:
+        task = self._downloads.pop(str(destination.resolve()), None)
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        destination.unlink(missing_ok=True)
 
     async def _download(self, message: Message, destination: Path, ready: asyncio.Event) -> None:
         downloaded = 0

@@ -8,6 +8,7 @@ Resposta: texto simples/Markdown, sempre uma única mensagem de resposta direta.
 from __future__ import annotations
 
 import time
+from typing import cast
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -49,24 +50,32 @@ HELP_TEXT = (
 )
 
 
-def register(app: Client) -> None:
+def register(app: Client, authorized: filters.Filter | None = None) -> None:
     """Registra `/start`, `/help`, `/ping` e `/version` em `app`."""
 
-    @app.on_message(filters.command("start"))  # type: ignore[misc]
+    def command(name: str) -> filters.Filter:
+        command_filter = filters.command(name)
+        return (
+            command_filter
+            if authorized is None
+            else cast(filters.Filter, command_filter & authorized)
+        )
+
+    @app.on_message(command("start"))  # type: ignore[misc]
     async def _start(_: Client, message: Message) -> None:
         await message.reply_text(_START_TEXT)
 
-    @app.on_message(filters.command("help"))  # type: ignore[misc]
+    @app.on_message(command("help"))  # type: ignore[misc]
     async def _help(_: Client, message: Message) -> None:
         await message.reply_text(HELP_TEXT)
 
-    @app.on_message(filters.command("ping"))  # type: ignore[misc]
+    @app.on_message(command("ping"))  # type: ignore[misc]
     async def _ping(_: Client, message: Message) -> None:
         started = time.monotonic()
         sent = await message.reply_text("Pong!")
         elapsed_ms = (time.monotonic() - started) * 1000
         await sent.edit_text(f"Pong! `{elapsed_ms:.0f}ms`")
 
-    @app.on_message(filters.command("version"))  # type: ignore[misc]
+    @app.on_message(command("version"))  # type: ignore[misc]
     async def _version(_: Client, message: Message) -> None:
         await message.reply_text(f"telegram-video-bridge v{__version__}")

@@ -122,6 +122,18 @@ def test_build_command_rtmp_output_uses_h264_aac_flv(
     assert str(streamer.video_pipe_path) not in command
 
 
+def test_build_command_rtmp_applies_configured_volume(
+    make_settings: Callable[..., Settings],
+) -> None:
+    streamer = FFmpegStreamer(make_settings())
+    streamer._output_url = "rtmps://telegram/s/secret"  # noqa: SLF001
+    streamer._volume_percent = 150  # noqa: SLF001
+
+    command = streamer.build_command(_LOCAL_SOURCE)
+
+    assert command[command.index("-af") + 1] == "volume=1.50"
+
+
 def test_build_command_burns_subtitle_with_delay(
     make_settings: Callable[..., Settings],
 ) -> None:
@@ -284,6 +296,23 @@ async def test_clean_exit_triggers_completion_callback(
     await streamer.start(_LOCAL_SOURCE)
     await asyncio.wait_for(completed.wait(), timeout=2.0)
     assert streamer.healthcheck().state is FFmpegProcessState.IDLE
+
+
+async def test_completion_callback_can_stop_streamer_without_self_cancellation(
+    make_settings: Callable[..., Settings], make_fake_ffmpeg: Callable[[str], Path]
+) -> None:
+    streamer = FFmpegStreamer(make_settings(ffmpeg_path=str(make_fake_ffmpeg("exit 0"))))
+    completed = asyncio.Event()
+
+    async def stop_after_completion() -> None:
+        await streamer.stop()
+        completed.set()
+
+    streamer.set_completion_callback(stop_after_completion)
+    await streamer.start(_LOCAL_SOURCE)
+
+    await asyncio.wait_for(completed.wait(), timeout=2.0)
+    assert streamer.healthcheck().state is FFmpegProcessState.STOPPED
 
 
 async def test_crash_triggers_auto_restart_and_recovers(

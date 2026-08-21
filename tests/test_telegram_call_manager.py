@@ -89,6 +89,7 @@ async def test_prepare_rtmp_returns_complete_ingest_url(
 
     assert await manager.prepare_rtmp() == "rtmps://telegram/s/secret"
     assert manager.healthcheck().state is CallState.CONNECTED
+    assert manager.rtmp_active is True
 
 
 async def test_join_call_invokes_play_with_correct_chat_id(
@@ -109,6 +110,24 @@ async def test_join_call_invokes_play_with_correct_chat_id(
     assert "cat --" in stream.microphone.path
     assert "cat --" in stream.camera.path
     assert manager.healthcheck().state is CallState.CONNECTED
+    assert manager.rtmp_active is False
+
+
+async def test_prepare_rtmp_leaves_existing_pytgcalls_transport(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+    tmp_path: Path,
+) -> None:
+    manager, fake_call_py = make_call_manager()
+    await manager.join_call(tmp_path / "video.pipe", tmp_path / "audio.pipe")
+    manager.client.resolve_peer = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+    manager.client.invoke = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[MagicMock(), GroupCallStreamRtmpUrl(url="rtmps://telegram/s/", key="secret")]
+    )
+
+    await manager.prepare_rtmp()
+
+    fake_call_py.leave_call.assert_awaited_once()
+    assert manager.rtmp_active is True
 
 
 async def test_send_media_reuses_play(

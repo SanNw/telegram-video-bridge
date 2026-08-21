@@ -13,13 +13,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.exceptions import AddonNotFoundError
 from app.addon_system.manager import AddonInfo
-from app.bot.auth import build_authorized_filter, build_owner_filter
+from app.bot.auth import build_authorized_filter, build_owner_filter, build_stream_admin_filter
 from app.bot.handlers import addons, info, playback, queue, status, unauthorized
 from app.config.settings import Settings
 from app.player.exceptions import InvalidQueueIndexError, QueueFullError
@@ -419,6 +420,37 @@ async def test_authorized_filter_true_for_stream_channel_admin(
 
     assert await authorized(client, message) is True
     assert client.calls == [(-1009876543210, 555)]
+
+
+async def test_stream_admin_filter_rejects_whitelisted_non_admin(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(stream_chat_id=-1009876543210, authorized_user_ids=[555])
+    stream_admin = build_stream_admin_filter(settings)
+    client = _FakeMemberCheckClient(status=ChatMemberStatus.MEMBER)
+
+    assert await stream_admin(client, FakeMessage(text="/help", user_id=555)) is False
+
+
+async def test_private_help_is_denied_to_non_admin(
+    make_settings: Callable[..., Settings],
+) -> None:
+    from pyrogram.enums import ChatMemberStatus
+
+    settings = make_settings(stream_chat_id=-1009876543210, authorized_user_ids=[555])
+    client = FakeClient()
+    client.get_chat_member = AsyncMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(status=ChatMemberStatus.MEMBER)
+    )
+    stream_admin = build_stream_admin_filter(settings)
+    info.register(client, stream_admin)  # type: ignore[arg-type]
+    unauthorized.register(client, stream_admin)  # type: ignore[arg-type]
+    message = FakeMessage(text="/help", user_id=555)
+
+    assert await dispatch(client, message) is True
+    assert message.replies == ["Você não tem permissão para usar este comando."]
 
 
 class _FakeMemberCheckClient:

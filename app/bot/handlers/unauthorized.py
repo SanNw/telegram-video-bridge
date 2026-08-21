@@ -24,6 +24,10 @@ def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
 
 
 _CONTROLLED_COMMANDS = [
+    "start",
+    "help",
+    "ping",
+    "version",
     "play",
     "pause",
     "resume",

@@ -29,19 +29,23 @@ from app.config.settings import Settings
 _DENIED_MEMBER_STATUSES = frozenset({ChatMemberStatus.LEFT, ChatMemberStatus.BANNED})
 
 
-async def is_authorized(settings: Settings, client: Any, user_id: int) -> bool:
-    """Retorna se `user_id` pode controlar o bot neste momento."""
+async def is_stream_admin(settings: Settings, client: Any, user_id: int) -> bool:
+    """Retorna se o usuário é proprietário do bot ou administrador do canal."""
     if user_id == settings.owner_user_id:
         return True
+    if settings.stream_chat_id is None:
+        return False
+    try:
+        member = await client.get_chat_member(settings.stream_chat_id, user_id)
+    except RPCError:
+        return False
+    return member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}
 
-    if settings.stream_chat_id is not None:
-        try:
-            member = await client.get_chat_member(settings.stream_chat_id, user_id)
-        except RPCError:
-            pass
-        else:
-            if member.status in {ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR}:
-                return True
+
+async def is_authorized(settings: Settings, client: Any, user_id: int) -> bool:
+    """Retorna se `user_id` pode controlar o bot neste momento."""
+    if await is_stream_admin(settings, client, user_id):
+        return True
 
     if settings.authorized_user_ids == "all":
         try:
@@ -64,6 +68,16 @@ def build_authorized_filter(settings: Settings) -> filters.Filter:
         return await is_authorized(settings, client, user.id)
 
     return filters.create(_is_authorized)
+
+
+def build_stream_admin_filter(settings: Settings) -> filters.Filter:
+    """Filtro usado no privado do BotFather: somente administradores do canal."""
+
+    async def _is_stream_admin(_flt: Any, client: Any, message: Message) -> bool:
+        user = message.from_user
+        return user is not None and await is_stream_admin(settings, client, user.id)
+
+    return filters.create(_is_stream_admin)
 
 
 def build_owner_filter(settings: Settings) -> filters.Filter:

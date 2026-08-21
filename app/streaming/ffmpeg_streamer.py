@@ -65,6 +65,7 @@ class FFmpegStreamer:
         self._subtitle_path: str | None = None
         self._subtitle_delay_ms = 0
         self._start_seconds = 0.0
+        self._volume_percent = 100
         self._state: FFmpegProcessState = FFmpegProcessState.IDLE
         self._restart_count = 0
         self._last_error: str | None = None
@@ -109,14 +110,43 @@ class FFmpegStreamer:
         if self._output_url is not None:
             command.extend(
                 [
-                    "-map", "0:v:0", "-map", "0:a:0?",
-                    "-vf", self._video_filter(),
-                    "-r", str(VIDEO_FPS), "-c:v", "libx264", "-preset", "veryfast",
-                    "-tune", "zerolatency", "-b:v", "3000k", "-maxrate", "3500k",
-                    "-bufsize", "7000k", "-g", str(VIDEO_FPS * 2),
-                    "-pix_fmt", VIDEO_PIXEL_FORMAT, "-c:a", "aac", "-b:a", "128k",
-                    "-ar", str(AUDIO_SAMPLE_RATE), "-ac", str(AUDIO_CHANNELS),
-                    "-f", "flv", self._output_url,
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a:0?",
+                    "-vf",
+                    self._video_filter(),
+                    "-r",
+                    str(VIDEO_FPS),
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-tune",
+                    "zerolatency",
+                    "-b:v",
+                    "3000k",
+                    "-maxrate",
+                    "3500k",
+                    "-bufsize",
+                    "7000k",
+                    "-g",
+                    str(VIDEO_FPS * 2),
+                    "-pix_fmt",
+                    VIDEO_PIXEL_FORMAT,
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-af",
+                    f"volume={self._volume_percent / 100:.2f}",
+                    "-ar",
+                    str(AUDIO_SAMPLE_RATE),
+                    "-ac",
+                    str(AUDIO_CHANNELS),
+                    "-f",
+                    "flv",
+                    self._output_url,
                 ]
             )
             return command
@@ -207,6 +237,7 @@ class FFmpegStreamer:
         subtitle_path: str | None = None,
         subtitle_delay_ms: int = 0,
         start_seconds: float = 0.0,
+        volume_percent: int = 100,
     ) -> None:
         """Troca a fonte sem exigir reconexão da chamada: só o writer dos pipes muda."""
         async with self._lock:
@@ -214,6 +245,7 @@ class FFmpegStreamer:
             self._subtitle_path = subtitle_path
             self._subtitle_delay_ms = subtitle_delay_ms
             self._start_seconds = start_seconds
+            self._volume_percent = volume_percent
             await self._stop_locked(notify_release=source != self._current_source)
             await self._launch(source)
         self._spawn_supervisor(source)
@@ -290,7 +322,8 @@ class FFmpegStreamer:
             await self._on_source_released(self._current_source)
         self._stopping_intentionally = True
         if self._supervisor_task is not None:
-            self._supervisor_task.cancel()
+            if self._supervisor_task is not asyncio.current_task():
+                self._supervisor_task.cancel()
             self._supervisor_task = None
         if self._healthcheck_task is not None:
             self._healthcheck_task.cancel()
