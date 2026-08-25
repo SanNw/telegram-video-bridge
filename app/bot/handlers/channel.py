@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -55,4 +55,4 @@ def register(app: Client, service: ChannelMediaService, authorized: filters.Filt
             await client.send_message(
                 chat_id, f"Filme do canal adicionado à fila, posição {position}."
             )
-            await query.edit_message_reply_markup(None)  # type: ignore[arg-type]
+            await query.edit_message_reply_markup(cast(Any, None))

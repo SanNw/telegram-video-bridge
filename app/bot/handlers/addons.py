@@ -47,7 +47,8 @@ sumirem da tela, ou o TMDB não confirmar o filme).
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InputRichMessage, Message
@@ -81,6 +82,10 @@ _PLAY_CALLBACK_PREFIX = "play:"
 _MOVIE_CALLBACK_PREFIX = "movie:"
 _CATALOG_CALLBACK_PREFIX = "catalog:"
 _logger = get_logger("bot")
+
+
+def _stop(message: Message) -> None:
+    cast(Callable[[], None], message.stop_propagation)()
 
 
 def _is_play_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
@@ -183,18 +188,18 @@ def register_search(
                 except Exception as exc:  # noqa: BLE001
                     _logger.warning("Falha ao enviar destaque do TMDB: {error}", error=exc)
             await message.reply_text(format_search_results(results), reply_markup=reply_markup)
-            message.stop_propagation()  # type: ignore[no-untyped-call]
+            _stop(message)
             return
         if not buttons_enabled:
             await message.reply_text("O catálogo interativo exige BOT_TOKEN configurado.")
-            message.stop_propagation()  # type: ignore[no-untyped-call]
+            _stop(message)
             return
         movies = await service.search_catalog(query)
         if not movies:
             await message.reply_text(
                 "O TMDB não encontrou filmes ou está indisponível. Tente novamente."
             )
-            message.stop_propagation()  # type: ignore[no-untyped-call]
+            _stop(message)
             return
         caption = format_catalog_page(movies, 0)
         markup = format_catalog_buttons(movies, 0)
@@ -205,7 +210,7 @@ def register_search(
         # O _unauthorized (group=1) também casa filters.command("find"); sem
         # stop_propagation ele dispara após este handler e responde "Você não
         # tem permissão" mesmo quando o usuário está autorizado.
-        message.stop_propagation()  # type: ignore[no-untyped-call]
+        _stop(message)
 
     @app.on_callback_query(catalog_callback_filter & authorized)  # type: ignore[misc]
     async def _catalog(client: Client, callback_query: CallbackQuery) -> None:
@@ -253,7 +258,7 @@ def register_search(
             )
         else:
             await client.send_message(chat.id, caption, reply_markup=markup)
-        await callback_query.edit_message_reply_markup(None)  # type: ignore[arg-type]
+        await callback_query.edit_message_reply_markup(cast(Any, None))
 
     @app.on_callback_query(play_callback_filter & authorized)  # type: ignore[misc]
     async def _play_candidate(client: Client, callback_query: CallbackQuery) -> None:
@@ -296,19 +301,19 @@ def register_search(
             )
         else:
             await callback_query.answer(f"Adicionado à fila ({addon_name}), posição {position}.")
-        await callback_query.edit_message_reply_markup(None)  # type: ignore[arg-type]
+        await callback_query.edit_message_reply_markup(cast(Any, None))
 
     @app.on_message(filters.command("pick") & authorized)  # type: ignore[misc]
     async def _pick(_: Client, message: Message) -> None:
         if message.command is None or len(message.command) < 2:
             await message.reply_text("Uso: `/pick <número>` (depois de um /find)")
-            message.stop_propagation()  # type: ignore[no-untyped-call]
+            _stop(message)
             return
         try:
             index = int(message.command[1])
         except ValueError:
             await message.reply_text("Posição inválida: precisa ser um número.")
-            message.stop_propagation()  # type: ignore[no-untyped-call]
+            _stop(message)
             return
         user_id = message.from_user.id if message.from_user else 0
         try:
@@ -326,7 +331,7 @@ def register_search(
         # Mesmo motivo do stop_propagation em /find: sem isso o _unauthorized
         # (group=1) dispara depois e responde "sem permissão" mesmo quando o
         # /pick já foi processado com sucesso (ou falhou por um motivo legítimo).
-        message.stop_propagation()  # type: ignore[no-untyped-call]
+        _stop(message)
 
 
 async def _run_addon_action(

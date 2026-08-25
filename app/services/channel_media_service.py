@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from pyrogram import Client
 from pyrogram.enums import MessagesFilter
@@ -150,7 +152,8 @@ class ChannelMediaService:
         target = int(self._settings.torrent_buffer_mb * 1024 * 1024)
         try:
             with destination.open("wb") as output:
-                async for chunk in self._client.stream_media(message):  # type: ignore[union-attr]
+                stream = cast(AsyncIterator[bytes], self._client.stream_media(message))
+                async for chunk in stream:
                     output.write(chunk)
                     downloaded += len(chunk)
                     if downloaded >= target:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -25,6 +27,10 @@ _DENIED_TEXT = (
     "Você não é administrador do canal configurado. Por isso, nenhum comando de "
     "controle enviado aqui será executado."
 )
+
+
+def _stop(message: Message) -> None:
+    cast(Callable[[], None], message.stop_propagation)()
 
 
 def _load(path: Path) -> dict[str, set[int]]:
@@ -69,4 +75,4 @@ def register(
             _save(path, updated)
             seen[bucket].add(user.id)
             if not authorized:
-                message.stop_propagation()  # type: ignore[no-untyped-call]
+                _stop(message)

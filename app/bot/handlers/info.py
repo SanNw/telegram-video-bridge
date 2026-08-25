@@ -74,7 +74,8 @@ def register(app: Client, authorized: filters.Filter | None = None) -> None:
         started = time.monotonic()
         sent = await message.reply_text("Pong!")
         elapsed_ms = (time.monotonic() - started) * 1000
-        await sent.edit_text(f"Pong! `{elapsed_ms:.0f}ms`")
+        if sent is not None:
+            await sent.edit_text(f"Pong! `{elapsed_ms:.0f}ms`")
 
     @app.on_message(command("version"))  # type: ignore[misc]
     async def _version(_: Client, message: Message) -> None:
