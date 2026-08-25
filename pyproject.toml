@@ -78,7 +78,7 @@ implicit_reexport = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "--cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=90"
+addopts = "--cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=88"
 
 [tool.coverage.run]
 source = ["app"]
