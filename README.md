@@ -1,106 +1,71 @@
-# Telerion
+<div align="center">
+  <img src="docs/assets/telerion-header.svg" alt="Telerion — Telegram Cinema Engine" width="100%">
 
-Telerion é um sistema de cinema para Telegram. Administradores controlam o bot
-por uma conversa privada e os espectadores assistem à transmissão ao vivo no
-canal configurado.
+  **Transforme um canal do Telegram em uma sala de cinema operada por bot.**
 
-O projeto pesquisa filmes, apresenta catálogo enriquecido pelo TMDB, resolve
-fontes por addons, reproduz arquivos já publicados no canal, baixa torrents de
-forma progressiva e adiciona legendas em português. A transmissão prioriza RTMP
-e usa PyTgCalls como fallback automático.
+  [![CI](https://github.com/SanNw/telegram-video-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/SanNw/telegram-video-bridge/actions/workflows/ci.yml)
+  [![Python 3.13](https://img.shields.io/badge/Python-3.13-65c5e8?logo=python&logoColor=white)](https://www.python.org/)
+  [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+  [![License MIT](https://img.shields.io/badge/license-MIT-f3c969)](LICENSE)
 
-> Use apenas mídias que você tem autorização para armazenar e transmitir. O
-> projeto não contorna DRM e não determina a situação jurídica das fontes
-> configuradas pelo operador.
+  🇧🇷 **Português** · [🇺🇸 English](README.en.md) · [🇪🇸 Español](README.es.md)
+</div>
 
-## Funcionalidades
+---
 
-- controle privado por administradores do canal;
-- catálogo interativo com pôsteres e informações do TMDB;
-- busca de fontes por addons Stremio e Internet Archive;
-- reprodução de vídeos já publicados no próprio canal com `/canal`;
-- transmissão RTMP H.264/AAC em 720p, com fallback PyTgCalls;
-- fila persistente, pausa, retomada, volume, repetição e avanço automático;
-- download progressivo por qBittorrent, sem esperar o arquivo inteiro;
-- armazenamento de mídia fora do disco do sistema;
-- limpeza automática dos arquivos temporários após a reprodução;
-- legendas automáticas em português por OpenSubtitles/Stremio;
-- ajuste de sincronização e ativação/desativação de legendas em tempo real;
-- isolamento de falhas por addon, retries e logs rotativos;
-- onboarding diferente para administradores e usuários não autorizados.
+## 🎞️ A sessão começa aqui
 
-## Como funciona
+Telerion conecta um bot privado, uma conta dedicada do Telegram e um pipeline FFmpeg. O operador escolhe o filme; o sistema pesquisa metadados e fontes, prepara legendas, organiza a fila e transmite para a live do canal.
 
-Telerion utiliza duas identidades do Telegram:
+> [!IMPORTANT]
+> Use somente mídias que você tem autorização para armazenar e transmitir. O Telerion não contorna DRM e addons de terceiros executam código com acesso ao processo autenticado.
 
-1. **Conta comum dedicada**: autentica por `SESSION_STRING`, gerencia a live
-   RTMP, participa da chamada no fallback e acessa os arquivos publicados no
-   canal.
-2. **Bot do BotFather**: recebe comandos privados, envia o catálogo rico e
-   apresenta botões interativos.
+| Na cabine | Na tela |
+|---|---|
+| 🎛️ Controle privado por administradores | 📡 Live RTMP com fallback PyTgCalls |
+| 🔎 Catálogo TMDB e addons | 🎬 H.264/AAC em 720p |
+| 📚 Fila persistente e controles | 💬 Legendas PT-BR com ajuste de sincronia |
+| 🧲 Download progressivo via qBittorrent | 🧹 Liberação e limpeza automática |
 
-```text
-Administrador -> bot privado -> handlers -> serviços -> fila
-                                               |       |
-                         TMDB/addons/torrent/canal      v
-                                               FFmpeg -> RTMP
-                                                  \----> PyTgCalls (fallback)
+<details>
+<summary><strong>▶ Ver o fluxo completo</strong></summary>
 
-Espectadores ----------------------------------> live do canal
+```mermaid
+flowchart LR
+    A[Administrador] -->|comandos privados| B[Bot Telerion]
+    B --> C{Origem}
+    C -->|/find| D[TMDB + Addons]
+    C -->|/canal| E[Acervo Telegram]
+    C -->|/play| F[Arquivo ou URL]
+    D --> G[qBittorrent / HTTP]
+    E --> H[Fila persistente]
+    F --> H
+    G --> H
+    H --> I[FFmpeg]
+    I -->|principal| J[RTMP]
+    I -->|fallback| K[PyTgCalls]
+    J --> L[Live do canal]
+    K --> L
 ```
 
-Os handlers apenas validam comandos e formatam respostas. A orquestração fica
-em `app/services/`, o estado da fila em `app/player/`, o FFmpeg em
-`app/streaming/` e os transportes Telegram em `app/telegram/`.
+</details>
 
-## Requisitos
+## 🍿 Estreia rápida
 
-- conta comum do Telegram dedicada ao Telerion;
-- aplicação Telegram com `API_ID` e `API_HASH` de
-  [my.telegram.org](https://my.telegram.org);
-- bot criado no [@BotFather](https://t.me/BotFather);
-- canal ou grupo com transmissão ao vivo;
-- Docker Desktop com Docker Compose;
-- qBittorrent com Web UI habilitada para fontes torrent;
-- **API Read Access Token** do
-  [TMDB](https://www.themoviedb.org/settings/api);
-- um disco com espaço para o buffer dos filmes.
-
-Python 3.13 e `uv` são usados uma vez no host para gerar a sessão e descobrir
-os IDs. Para instalar o `uv` no Windows:
-
-```powershell
-winget install --id Python.Python.3.13 -e
-python -m pip install uv
-python --version
-uv --version
-```
-
-O FFmpeg só é necessário no host para desenvolvimento; a imagem Docker já o
-inclui.
-
-## Início rápido
-
-1. Clone o projeto:
+**Você precisa de:** Docker Compose, uma conta Telegram dedicada, um bot do BotFather, um canal com live, credenciais MTProto, token TMDB e qBittorrent para torrents.
 
 ```bash
 git clone https://github.com/SanNw/telegram-video-bridge.git
 cd telegram-video-bridge
-```
-
-2. Crie a configuração:
-
-```bash
 cp .env.example .env
+uv sync
+uv run python -u scripts/generate_session.py
+uv run python -m app.doctor
+docker compose up -d --build
 ```
 
-No PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-3. Preencha pelo menos:
+<details>
+<summary><strong>🔐 Variáveis obrigatórias</strong></summary>
 
 ```dotenv
 API_ID=
@@ -112,120 +77,71 @@ OWNER_USER_ID=
 BOT_TOKEN=
 TMDB_API_KEY=
 
+MEDIA_HOST_PATH=./media/torrents
 QBITTORRENT_HOST=host.docker.internal
 QBITTORRENT_PORT=8080
 QBITTORRENT_USERNAME=admin
 QBITTORRENT_PASSWORD=
 QBITTORRENT_SAVE_PATH=E:/Backup/Filmes
 QBITTORRENT_LOCAL_PATH=/app/media/torrents
-TORRENT_BUFFER_MB=300
-TORRENT_TIMEOUT_SECONDS=600
-REMOVE_TORRENT_AFTER_PLAY=true
 ```
 
-`QBITTORRENT_SAVE_PATH` é o caminho visto pelo Windows e pelo qBittorrent.
-`QBITTORRENT_LOCAL_PATH` é o mesmo diretório visto de dentro do container.
+`MEDIA_HOST_PATH` é o diretório do host montado no container. `QBITTORRENT_SAVE_PATH` é o caminho visto pelo qBittorrent; `QBITTORRENT_LOCAL_PATH` é o mesmo conteúdo visto pelo Telerion.
 
-4. Gere a sessão da conta comum:
+</details>
 
-```bash
-uv sync
-uv run python -u scripts/generate_session.py
-```
+## 🎛️ Comandos da cabine
 
-Cole o valor gerado em `SESSION_STRING`. Nunca publique essa string: ela dá
-acesso à conta autenticada.
+| Descoberta | Reprodução | Sessão |
+|---|---|---|
+| `/find <filme>` | `/play <fonte>` | `/status` |
+| `/canal <filme>` | `/pause` · `/resume` | `/queue` · `/clear` |
+| `/addons` | `/stop` · `/skip` · `/restart` | `/loop off\|item\|queue` |
+| `/pick <n>` | `/volume <0-200>` | `/legenda` · `/subdelay` |
 
-Para descobrir `CHAT_ID`, `STREAM_CHAT_ID` e o ID da conta humana que operará o
-bot, informe o `@username` dessa pessoa:
-
-```bash
-uv run python scripts/list_chats.py @username_do_operador
-```
-
-Use o valor `OWNER_USER_ID` exibido, não o `SESSION_ACCOUNT_ID` da conta
-dedicada. O operador precisa ter iniciado uma conversa com a conta dedicada ou
-compartilhar um grupo/canal acessível a ela.
-
-5. Adicione a conta comum e o bot como administradores do canal. A conta comum
-precisa poder gerenciar transmissões ao vivo.
-
-6. Suba o serviço:
-
-```bash
-docker compose up -d --build
-docker compose ps
-```
-
-7. Abra o bot no privado. Administradores recebem o manual de comandos no
-primeiro contato. Usuários sem permissão recebem uma recusa e seus comandos não
-são executados.
-
-## Comandos principais
-
-| Comando | Função |
-|---|---|
-| `/find <filme>` | Pesquisa filmes e abre o catálogo interativo |
-| `/canal <filme>` | Pesquisa vídeos já publicados no canal |
-| `/play <arquivo ou URL>` | Adiciona uma fonte direta à fila |
-| `/pause` / `/resume` | Pausa ou retoma RTMP/PyTgCalls |
-| `/stop` / `/skip` | Encerra o item atual ou avança a fila |
-| `/restart` | Reinicia o filme atual |
-| `/volume <0-200>` | Ajusta o volume |
-| `/queue` / `/clear` | Consulta ou limpa itens pendentes |
-| `/remove <posição>` | Remove um item pendente |
-| `/loop <off\|item\|queue>` | Configura repetição |
-| `/legenda on\|off` | Liga ou desliga a legenda disponível |
-| `/subdelay <ms>` | Corrige sincronização da legenda |
-| `/nowplaying` / `/status` | Exibe reprodução e saúde do serviço |
-
-Filmes identificados como dublados, nacionais ou em português não recebem
-legenda automática. Em fontes `Dual Áudio`, a legenda é mantida por segurança.
-
-## Armazenamento
-
-O desenho recomendado mantém vídeos e legendas no HD externo:
+## 🧭 Mapa do projeto
 
 ```text
-E:/Backup/Filmes/
-├── <downloads do qBittorrent>
-├── channel/       # cópias progressivas vindas do canal
-└── .subtitles/    # legendas temporárias
+app/bot/          comandos, autorização e respostas
+app/services/     orquestração dos casos de uso
+app/player/       fila, estado e persistência
+app/streaming/    FFmpeg e supervisão de processos
+app/telegram/     MTProto, RTMP e PyTgCalls
+app/addon_system/ contrato e ciclo de vida dos addons
+addons/           fontes de mídia instaladas
 ```
 
-O FFmpeg começa após o buffer configurado e lê o mesmo arquivo que ainda está
-sendo baixado. Ao terminar, pular ou parar a reprodução, o serviço libera a
-fonte e remove os arquivos temporários conforme a configuração.
+## 🧩 Crie uma nova fonte
 
-## Desenvolvimento
+```bash
+uv run python scripts/new_addon.py meu_addon
+```
+
+Leia o [contrato de addons](docs/ADDONS.md) antes de distribuir código. Addons são confiáveis por definição e rodam no mesmo processo da sessão Telegram.
+
+## 🧪 Qualidade antes da sessão
 
 ```bash
 uv sync --all-groups
-uv run ruff check app tests
-uv run black --check app tests
+uv run ruff check .
+uv run black --check .
 uv run mypy
 uv run pytest
+docker build -f docker/Dockerfile -t telerion:local .
 ```
 
-A suíte possui mais de 500 testes. A configuração de CI exige cobertura mínima
-de 90%; novos fluxos devem incluir testes de regressão.
+## 📚 Próximos rolos
 
-## Documentação completa
+- [Manual operacional completo](docs/MANUAL.md)
+- [Como contribuir](CONTRIBUTING.md)
+- [Política de segurança](SECURITY.md)
+- [Código de conduta](CODE_OF_CONDUCT.md)
+- [Histórico de versões](CHANGELOG.md)
 
-Consulte [docs/MANUAL.md](docs/MANUAL.md) para:
+---
 
-- preparação das contas e permissões do Telegram;
-- configuração variável por variável;
-- instalação do qBittorrent e armazenamento no HD;
-- arquitetura e ciclo completo de reprodução;
-- RTMP, fallback, legendas, TMDB e addons;
-- operação, atualização, backup, testes e troubleshooting;
-- instruções para replicar o projeto em outra máquina ou canal.
-
-## Segurança
-
-- `.env`, `SESSION_STRING`, tokens e senhas nunca devem ser versionados;
-- addons executam Python no processo principal e devem vir de fontes confiáveis;
-- gerenciamento destrutivo de addons é restrito a `OWNER_USER_ID`;
-- fontes locais são confinadas ao diretório de mídia permitido;
-- o FFmpeg é iniciado sem shell e recebe argumentos já validados.
+<div align="center">
+  <strong>Telerion</strong><br>
+  Uma cabine pequena para uma tela compartilhada.<br><br>
+  Distribuído sob a <a href="LICENSE">licença MIT</a>.
+</div>

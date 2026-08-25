@@ -6,6 +6,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.pytest-local*/
 htmlcov/
 .coverage
 coverage.xml
@@ -30,3 +31,14 @@ media/*
 .vscode/
 .idea/
 .DS_Store
+
+# Local analysis and troubleshooting artifacts
+graphify-out/
+.omo/
+thoughts/
+check_*.py
+tmp_*.py
+out*.txt
+ran_*.txt
+strem_*.txt
+compare_subs.py

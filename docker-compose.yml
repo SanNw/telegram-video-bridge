@@ -3,13 +3,12 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: telegram-video-bridge
     restart: unless-stopped
     env_file:
       - .env
     volumes:
       - logs:/app/logs
-      - ${QBITTORRENT_SAVE_PATH:-./media/torrents}:/app/media/torrents
+      - ${MEDIA_HOST_PATH:-./media/torrents}:/app/media/torrents
       - data:/app/data
 
 volumes:

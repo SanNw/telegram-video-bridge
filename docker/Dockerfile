@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get install -y --no-install-recommends build-essential
 
 WORKDIR /build
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 # --no-install-project: só as dependências de terceiros vão para o venv. O
 # código da aplicação (app/) é copiado direto na imagem final e executado via
 # `python -m app.main` (CWD entra no sys.path) — não precisamos instalar o
@@ -57,5 +57,8 @@ RUN mkdir -p /app/media /app/logs /app/data \
 USER bridge
 
 VOLUME ["/app/logs", "/app/media", "/app/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import os; os.kill(1, 0)"]
 
 CMD ["python", "-m", "app.main"]

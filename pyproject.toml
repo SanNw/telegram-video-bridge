@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Transmite vídeos autorizados para chamadas de vídeo/grupo do Telegram via MTProto, operando inteiramente em background."
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 dependencies = [
     # kurigram: fork ativamente mantido do Pyrogram (mesmo namespace de import
     # `pyrogram`, drop-in). O Pyrogram oficial está sem release desde abril/2023

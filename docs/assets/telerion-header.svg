@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">Telerion</title>
+  <desc id="desc">A cinematic Telegram broadcast system</desc>
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07131d"/><stop offset=".55" stop-color="#102d3d"/><stop offset="1" stop-color="#0b1923"/></linearGradient>
+    <radialGradient id="beam" cx="0" cy=".5" r="1"><stop stop-color="#f3c969" stop-opacity=".52"/><stop offset="1" stop-color="#f3c969" stop-opacity="0"/></radialGradient>
+    <pattern id="grain" width="12" height="12" patternUnits="userSpaceOnUse"><circle cx="2" cy="3" r=".6" fill="#fff" opacity=".10"/><circle cx="9" cy="8" r=".5" fill="#fff" opacity=".07"/></pattern>
+  </defs>
+  <rect width="1200" height="360" rx="24" fill="url(#night)"/><path d="M0 96 L790 178 L0 276 Z" fill="url(#beam)"/><path d="M0 293 C180 255 300 334 480 294 S820 250 1200 305 V360 H0Z" fill="#061019" opacity=".8"/>
+  <g transform="translate(78 118)" fill="none" stroke="#f3c969" stroke-width="8"><circle cx="54" cy="20" r="19"/><circle cx="104" cy="20" r="19"/><rect x="24" y="48" width="108" height="70" rx="14"/><path d="M132 66 L174 48 V118 L132 100Z"/></g>
+  <text x="300" y="177" fill="#f7f1df" font-family="Georgia, serif" font-size="94" font-weight="700" letter-spacing="4">TELERION</text>
+  <text x="306" y="226" fill="#65c5e8" font-family="Arial, sans-serif" font-size="22" letter-spacing="7">TELEGRAM CINEMA ENGINE</text>
+  <line x1="306" y1="252" x2="1010" y2="252" stroke="#f3c969" stroke-width="2" opacity=".65"/><text x="306" y="290" fill="#cad8dd" font-family="Arial, sans-serif" font-size="18">SEARCH  ·  QUEUE  ·  SUBTITLE  ·  BROADCAST</text><rect width="1200" height="360" rx="24" fill="url(#grain)"/>
+</svg>

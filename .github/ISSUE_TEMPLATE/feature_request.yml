@@ -1,0 +1,25 @@
+name: "🎬 Feature · Recurso · Función"
+description: Propose a focused improvement
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Problem to solve / Problema a resolver
+      description: Explain the real use case before proposing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / Comportamento / Comportamiento
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This cannot already be achieved through configuration or an addon.
+          required: true

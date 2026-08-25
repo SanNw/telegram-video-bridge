@@ -13,6 +13,7 @@ nenhum dos dois isoladamente. Por isso o construtor depende de `TMDBService`.
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 from app.addon_system.base import AddonHealth, SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo, AddonManager
@@ -48,6 +49,10 @@ _TMDB_MATCH_THRESHOLD = 65.0
 # mais tolerante, usado só quando o TMDB não confirma o filme.
 _FUZZY_FALLBACK_THRESHOLD = 55.0
 _OPENSUBTITLES_URL = "https://opensubtitles-v3.strem.io"
+
+# IMDb ID -> tupla de file_id conhecidos que corrigem problemas de sincronia
+# conhecidos.
+_PINNED_SUBTITLES: dict[str, tuple[int, ...]] = {"tt0089881": (292268,)}
 
 
 class AddonService:
@@ -252,16 +257,10 @@ class AddonService:
 
     async def prepare_subtitle(self, imdb_id: str, title: str) -> str | None:
         subtitles = await self._subtitles.get_subtitles("movie", imdb_id)
-        selected = next(
-            (
-                item
-                for language in ("pob", "por", "pt-BR", "pt")
-                for item in subtitles
-                if item.get("lang") == language and isinstance(item.get("url"), str)
-            ),
-            None,
-        )
-        if selected is None:
+        if not subtitles:
+            return None
+        selected = self._pick_portuguese_subtitle(subtitles, imdb_id)
+        if selected is None or not isinstance(selected.get("url"), str):
             return None
         content = await self._subtitles.download_subtitle(selected["url"])
         if content is None:
@@ -271,6 +270,50 @@ class AddonService:
         await asyncio.to_thread(path.write_bytes, content)
         _logger.info("Legenda em português preparada para {title}.", title=title)
         return str(path)
+
+    @staticmethod
+    def _pick_portuguese_subtitle(
+        subtitles: list[dict[str, Any]], imdb_id: str
+    ) -> dict[str, Any] | None:
+        """Escolhe a melhor legenda PT a partir de uma lista bruta do addon.
+
+        Critérios, em ordem:
+
+        1. Correspondência exata por `file_id` em uma tabela de correções
+           conhecida (`_PINNED_SUBTITLES`). Usado quando o addon devolve uma
+           faixa dessincronizada para um filme específico, mas existe uma
+           versão alternativa bem sincronizada que o próprio addon não sabe
+           priorizar — caso conhecido: *Ran* (tt0089881), onde a faixa 134344
+           chega 2-3 s adiantada e a 292268 é a correta.
+        2. Filtro por idioma (`pob` > `por` > `pt-BR` > `pt`), descartando
+           faixas marcadas como `hearing_impaired`.
+        3. Qualquer faixa em um dos idiomas acima, com ou sem flag de HI
+           (fallback).
+        """
+        pinned_ids = _PINNED_SUBTITLES.get(imdb_id, ())
+        for pinned in pinned_ids:
+            for item in subtitles:
+                if item.get("id") == pinned and item.get("url"):
+                    return item
+                for file_entry in item.get("files") or ():
+                    if file_entry.get("file_id") != pinned:
+                        continue
+                    if file_entry.get("url"):
+                        return cast(dict[str, Any], file_entry)
+                    if item.get("url"):
+                        return item
+        for language in ("pob", "por", "pt-BR", "pt"):
+            for item in subtitles:
+                if item.get("lang") != language:
+                    continue
+                if item.get("hearing_impaired") is True:
+                    continue
+                return item
+        for language in ("pob", "por", "pt-BR", "pt"):
+            for item in subtitles:
+                if item.get("lang") == language:
+                    return item
+        return None
 
     async def close(self) -> None:
         await self._subtitles.close()

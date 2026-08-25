@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -93,10 +94,27 @@ class ChannelMediaService:
         _logger.info("Buffer do canal atingido: {path}", path=destination)
         try:
             subtitle_path = None
-            if not has_portuguese_audio(movie.title):
-                imdb_id = await self._tmdb.find_imdb_id(movie.title)
+            clean_title = self._clean_channel_title(movie.title)
+            if not has_portuguese_audio(clean_title):
+                _logger.info(
+                    "Buscando legenda para vídeo do canal: {title} (clean: {clean})",
+                    title=movie.title,
+                    clean=clean_title,
+                )
+                imdb_id = await self._tmdb.find_imdb_id(clean_title)
                 if imdb_id is not None:
-                    subtitle_path = await self._addons.prepare_subtitle(imdb_id, movie.title)
+                    subtitle_path = await self._addons.prepare_subtitle(imdb_id, clean_title)
+                else:
+                    _logger.warning(
+                        "IMDb ID não encontrado no TMDB para vídeo do canal: {title} (clean: {clean})",
+                        title=movie.title,
+                        clean=clean_title,
+                    )
+            else:
+                _logger.info(
+                    "Vídeo do canal possui áudio em português; legenda ignorada: {title}",
+                    title=clean_title,
+                )
             return await self._playback.play(str(destination), requested_by, subtitle_path)
         except Exception:
             await self._discard_download(destination)
@@ -141,6 +159,24 @@ class ChannelMediaService:
         except Exception:
             ready.set()
             raise
+
+    @staticmethod
+    def _clean_channel_title(raw: str) -> str:
+        """Extrai o título do filme de um título de postagem do canal.
+
+        Trata padrões como:
+        - "#F33 Ran - Akira Kurosawa"
+        - "Ran (1985) - Akira Kurosawa"
+        """
+        cleaned = re.sub(r"^#\w+\s*", "", raw).strip()
+        if " - " in cleaned:
+            parts = [p.strip() for p in cleaned.split(" - ")]
+            if len(parts) >= 2:
+                last = parts[-1]
+                if re.match(r"^[A-Z][a-z]+ [A-Z][a-z]+$", last):
+                    cleaned = " - ".join(parts[:-1])
+        cleaned = re.sub(r"\s*\((?:19|20)\d{2}\)\s*$", "", cleaned)
+        return cleaned.strip()
 
     @staticmethod
     def _as_movie(message: Message) -> ChannelMovie | None:

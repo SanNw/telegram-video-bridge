@@ -1,5 +1,7 @@
 # Manual técnico e operacional do Telerion
 
+[English](MANUAL.en.md) · [Español](MANUAL.es.md)
+
 Este manual explica como instalar, replicar, operar e manter o Telerion. Ele
 descreve o comportamento atual do código; o README funciona como porta de
 entrada.
@@ -202,6 +204,7 @@ QBITTORRENT_HOST=host.docker.internal
 QBITTORRENT_PORT=8080
 QBITTORRENT_SAVE_PATH=E:/Backup/Filmes
 QBITTORRENT_LOCAL_PATH=/app/media/torrents
+MEDIA_HOST_PATH=E:/Backup/Filmes
 ```
 
 | Processo | Caminho do mesmo diretório |
@@ -297,6 +300,7 @@ REMOVE_TORRENT_AFTER_PLAY=true
 Primeira inicialização:
 
 ```bash
+uv run python -m app.doctor
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail 100 bridge
@@ -304,7 +308,7 @@ docker compose logs --tail 100 bridge
 
 Estado esperado:
 
-- container `telegram-video-bridge` em `Up`;
+- serviço `bridge` em `Up` e saudável;
 - cliente Telegram e `PlaybackService` iniciados;
 - addons carregados;
 - ausência de traceback atual em `errors.log`.
@@ -519,8 +523,8 @@ código revisado. A instalação é manual; ações destrutivas são do owner.
 ```bash
 docker compose ps
 docker compose logs --tail 100 bridge
-docker exec telegram-video-bridge sh -lc "tail -n 100 /app/logs/stream.log"
-docker exec telegram-video-bridge sh -lc "tail -n 100 /app/logs/errors.log"
+docker compose exec bridge sh -lc "tail -n 100 /app/logs/stream.log"
+docker compose exec bridge sh -lc "tail -n 100 /app/logs/errors.log"
 ```
 
 Logs antigos continuam no arquivo. Sempre compare timestamps.
