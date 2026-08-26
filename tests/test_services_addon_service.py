@@ -497,6 +497,18 @@ async def test_pick_candidate_success_plays_and_returns_addon_name(
     playback.play.assert_awaited_once_with("https://a.example/1.mp4", 111)
 
 
+async def test_play_resolved_candidate_does_not_depend_on_global_tokens(
+    service: AddonService, playback: MagicMock
+) -> None:
+    result = SearchResult(media_id="1", title="Movie A", addon_name="archive_org")
+    candidate = StreamCandidate(url="https://a.example/1.mp4", title="Movie A", quality="1080p")
+
+    addon_name, position = await service.play_resolved_candidate(result, candidate, 222)
+
+    assert (addon_name, position) == ("archive_org", 3)
+    playback.play.assert_awaited_once_with("https://a.example/1.mp4", 222)
+
+
 async def test_pick_candidate_unknown_token_raises(service: AddonService) -> None:
     with pytest.raises(InvalidSearchIndexError):
         await service.pick_candidate("0", requested_by=111)

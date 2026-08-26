@@ -47,19 +47,25 @@ sumirem da tela, ou o TMDB não confirmar o filme).
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from pyrogram import Client, filters
 from pyrogram.types import CallbackQuery, InputRichMessage, Message
 
+from app.addon_system.base import SearchResult, StreamCandidate
 from app.addon_system.exceptions import AddonError
 from app.bot.formatting import (
     format_addon_info,
     format_addons_list,
+    format_candidate_page,
     format_catalog_buttons,
     format_catalog_page,
     format_movie_card,
+    format_movie_details,
+    format_movie_results,
     format_search_results,
     format_stream_buttons,
     format_tmdb_rich_message,
@@ -72,6 +78,7 @@ from app.services.exceptions import (
     TorrentResolutionError,
     TorrentTimeoutError,
 )
+from app.telegram.bot_api import BotAPIClient, BotAPIError
 from app.utils.logging import get_logger
 from app.utils.sanitize import InvalidSourceError
 
@@ -81,7 +88,19 @@ _OWNER_ONLY_ACTIONS = {"enable", "disable", "reload", "uninstall"}
 _PLAY_CALLBACK_PREFIX = "play:"
 _MOVIE_CALLBACK_PREFIX = "movie:"
 _CATALOG_CALLBACK_PREFIX = "catalog:"
+_SOURCES_CALLBACK_PREFIX = "sources:"
+_SOURCE_CALLBACK_PREFIX = "source:"
+_FLOW_CALLBACK_PREFIX = "flow:"
 _logger = get_logger("bot")
+
+
+@dataclass(slots=True)
+class _FlowState:
+    movie_index: int | None = None
+    ephemeral_message_id: int | None = None
+    page: int = 0
+    candidates: list[tuple[str, SearchResult, StreamCandidate]] = field(default_factory=list)
+    updated_at: float = field(default_factory=time.monotonic)
 
 
 def _stop(message: Message) -> None:
@@ -100,7 +119,13 @@ play_callback_filter = filters.create(_is_play_callback, "PlayCallbackFilter")
 def _is_catalog_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
     data = getattr(callback_query, "data", None)
     return isinstance(data, str) and data.startswith(
-        (_MOVIE_CALLBACK_PREFIX, _CATALOG_CALLBACK_PREFIX)
+        (
+            _MOVIE_CALLBACK_PREFIX,
+            _CATALOG_CALLBACK_PREFIX,
+            _SOURCES_CALLBACK_PREFIX,
+            _SOURCE_CALLBACK_PREFIX,
+            _FLOW_CALLBACK_PREFIX,
+        )
     )
 
 
@@ -153,6 +178,7 @@ def register_search(
     service: AddonService,
     authorized: filters.Filter,
     buttons_enabled: bool,
+    bot_api: BotAPIClient | None = None,
 ) -> None:
     """Registra `/find`, `/pick` e o callback `play:` em `app`.
 
@@ -160,6 +186,49 @@ def register_search(
     nesse caso a resposta comum de `/find` carrega botões inline (ver
     docstring do módulo).
     """
+    flows: dict[tuple[int, int], _FlowState] = {}
+
+    def _flow(chat_id: int, user_id: int) -> _FlowState:
+        now = time.monotonic()
+        for key, value in list(flows.items()):
+            if now - value.updated_at > 900:
+                del flows[key]
+        state = flows.setdefault((chat_id, user_id), _FlowState())
+        state.updated_at = now
+        return state
+
+    async def _render(
+        callback_query: CallbackQuery,
+        state: _FlowState,
+        rich_message: dict[str, object],
+    ) -> None:
+        if bot_api is None or callback_query.from_user is None:
+            return
+        callback_message = callback_query.message
+        if callback_message is None or callback_message.chat is None:
+            return
+        chat_id = callback_message.chat.id
+        if chat_id is None:
+            return
+        user_id = callback_query.from_user.id
+        if state.ephemeral_message_id is None:
+            result = await bot_api.send_rich_message(
+                chat_id,
+                rich_message,
+                receiver_user_id=user_id,
+                callback_query_id=callback_query.id,
+                replace_callback_query_message=True,
+            )
+            message_id = result.get("ephemeral_message_id")
+            if isinstance(message_id, int):
+                state.ephemeral_message_id = message_id
+            return
+        await bot_api.edit_ephemeral_message(
+            chat_id,
+            user_id,
+            state.ephemeral_message_id,
+            rich_message,
+        )
 
     @app.on_message(filters.command("find") & authorized)  # type: ignore[misc]
     async def _find(client: Client, message: Message) -> None:
@@ -215,6 +284,85 @@ def register_search(
     @app.on_callback_query(catalog_callback_filter & authorized)  # type: ignore[misc]
     async def _catalog(client: Client, callback_query: CallbackQuery) -> None:
         data = callback_query.data if isinstance(callback_query.data, str) else ""
+        callback_message = callback_query.message
+        user = callback_query.from_user
+        if (
+            bot_api is not None
+            and callback_message is not None
+            and callback_message.chat is not None
+            and callback_message.chat.id is not None
+            and user is not None
+        ):
+            state = _flow(callback_message.chat.id, user.id)
+            try:
+                if data.startswith(_CATALOG_CALLBACK_PREFIX):
+                    page = int(data.removeprefix(_CATALOG_CALLBACK_PREFIX))
+                    state.page = page
+                    await _render(
+                        callback_query, state, format_movie_results(service.catalog(), page)
+                    )
+                elif data.startswith(_MOVIE_CALLBACK_PREFIX):
+                    index = int(data.removeprefix(_MOVIE_CALLBACK_PREFIX))
+                    movie, metadata, _ = await service.select_catalog_movie(index)
+                    state.movie_index = index
+                    state.candidates = await service.resolve_candidates()
+                    await _render(callback_query, state, format_movie_details(movie, metadata))
+                elif data.startswith(_SOURCES_CALLBACK_PREFIX):
+                    page = int(data.removeprefix(_SOURCES_CALLBACK_PREFIX))
+                    state.page = page
+                    await _render(
+                        callback_query, state, format_candidate_page(state.candidates, page)
+                    )
+                elif data == "flow:refresh" and state.movie_index is not None:
+                    await service.select_catalog_movie(state.movie_index)
+                    state.candidates = await service.resolve_candidates()
+                    await _render(
+                        callback_query,
+                        state,
+                        format_candidate_page(state.candidates, state.page),
+                    )
+                elif data == "flow:back":
+                    await _render(callback_query, state, format_movie_results(service.catalog(), 0))
+                elif data == "flow:cancel":
+                    await _render(
+                        callback_query,
+                        state,
+                        {"blocks": [{"type": "paragraph", "text": "Seleção cancelada."}]},
+                    )
+                elif data.startswith(_SOURCE_CALLBACK_PREFIX):
+                    token = data.removeprefix(_SOURCE_CALLBACK_PREFIX)
+                    selected = next(
+                        (entry for entry in state.candidates if entry[0] == token), None
+                    )
+                    if selected is None:
+                        await callback_query.answer("Essa fonte expirou.", show_alert=True)
+                        return
+                    await _render(
+                        callback_query,
+                        state,
+                        {"blocks": [{"type": "paragraph", "text": "Preparando reprodução…"}]},
+                    )
+                    _, result, candidate = selected
+                    addon_name, position = await service.play_resolved_candidate(
+                        result, candidate, user.id
+                    )
+                    await _render(
+                        callback_query,
+                        state,
+                        {
+                            "blocks": [
+                                {
+                                    "type": "paragraph",
+                                    "text": f"Adicionado à fila ({addon_name}), posição {position}.",
+                                }
+                            ]
+                        },
+                    )
+                await callback_query.answer()
+                return
+            except (BotAPIError, InvalidSearchIndexError, NoStreamsAvailableError) as exc:
+                await callback_query.answer(str(exc), show_alert=True)
+                return
         if data.startswith(_CATALOG_CALLBACK_PREFIX):
             page = int(data.removeprefix(_CATALOG_CALLBACK_PREFIX))
             movies = service.catalog()

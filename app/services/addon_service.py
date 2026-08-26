@@ -386,6 +386,13 @@ class AddonService:
         position = await self._play_candidate(result, candidate, requested_by)
         return result.addon_name, position
 
+    async def play_resolved_candidate(
+        self, result: SearchResult, candidate: StreamCandidate, requested_by: int
+    ) -> tuple[str, int]:
+        """Reproduz um candidato já isolado no fluxo efêmero do usuário."""
+        position = await self._play_candidate(result, candidate, requested_by)
+        return result.addon_name, position
+
 
 def _candidate_sort_key(
     item: tuple[SearchResult, StreamCandidate],
