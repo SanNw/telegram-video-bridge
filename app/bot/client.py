@@ -66,7 +66,7 @@ def build_bot(
 
     _register_controls(app)
     if bot_client is not None and bot_client is not app:
-        onboarding.register(bot_client, settings)
+        onboarding.register(bot_client, settings, bot_api=bot_api)
         _register_controls(bot_client, bot_authorized)
         if channel_media_service is not None:
             channel.register(bot_client, channel_media_service, bot_authorized)

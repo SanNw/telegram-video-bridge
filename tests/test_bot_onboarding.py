@@ -10,6 +10,8 @@ from pyrogram.enums import ChatMemberStatus
 
 from app.bot.handlers import onboarding
 from app.config.settings import Settings
+from app.telegram.bot_api import BotAPIError
+from tests.test_bot_movie_flow import _FakeBotAPI
 
 
 class _Client:
@@ -31,8 +33,9 @@ class _Client:
 
 
 class _Message:
-    def __init__(self, user_id: int) -> None:
-        self.from_user = SimpleNamespace(id=user_id)
+    def __init__(self, user_id: int, first_name: str = "Rafael") -> None:
+        self.from_user = SimpleNamespace(id=user_id, first_name=first_name)
+        self.chat = SimpleNamespace(id=user_id)
         self.replies: list[str] = []
         self.stopped = False
 
@@ -97,3 +100,40 @@ async def test_persisted_admin_is_not_greeted_after_restart(
     )  # type: ignore[arg-type]
 
     assert (await _send(client, 123)).replies == []
+
+
+async def test_admin_receives_personalized_rich_menu_once(
+    tmp_path: Path, make_settings: Callable[..., Settings]
+) -> None:
+    path = tmp_path / "onboarding.json"
+    settings = make_settings(stream_chat_id=-1001, authorized_user_ids=[])
+    client = _Client(ChatMemberStatus.ADMINISTRATOR)
+    bot_api = _FakeBotAPI()
+    onboarding.register(client, settings, path, bot_api=bot_api)  # type: ignore[arg-type]
+
+    await _send(client, 123)
+
+    payload = json.dumps(bot_api.sent[0]["rich_message"], ensure_ascii=False)
+    assert "Rafael" in payload
+    assert "menu:find" in payload
+    assert json.loads(path.read_text())["admins"] == [123]
+
+
+async def test_onboarding_fallback_has_no_literal_markdown_markers(
+    tmp_path: Path, make_settings: Callable[..., Settings]
+) -> None:
+    class _FailingBotAPI(_FakeBotAPI):
+        async def send_rich_message(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+            raise BotAPIError("rejected")
+
+    client = _Client(ChatMemberStatus.ADMINISTRATOR)
+    onboarding.register(
+        client,
+        make_settings(stream_chat_id=-1001, authorized_user_ids=[]),
+        tmp_path / "onboarding.json",
+        bot_api=_FailingBotAPI(),
+    )  # type: ignore[arg-type]
+
+    message = await _send(client, 123)
+
+    assert "*" not in message.replies[0]

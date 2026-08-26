@@ -22,6 +22,7 @@ from app.services.channel_media_service import ChannelMediaService
 from app.services.playback_service import PlaybackService
 from app.services.tmdb_service import TMDBService
 from app.services.torrent_service import TorrentService
+from app.telegram.bot_api import BotAPIClient
 from app.utils.logging import get_logger, setup_logging
 
 _logger = get_logger("services")
@@ -53,14 +54,17 @@ async def _run() -> None:
     service.set_source_released_callback(channel_media_service.release)
 
     bot_client: Client | None = None
+    bot_api: BotAPIClient | None = None
     if settings.bot_token is not None:
+        token = settings.bot_token.get_secret_value()
         bot_client = Client(
             name="telegram-video-bridge-botapi",
             workdir="/app/data",
             api_id=settings.api_id,
             api_hash=settings.api_hash.get_secret_value(),
-            bot_token=settings.bot_token.get_secret_value(),
+            bot_token=token,
         )
+        bot_api = BotAPIClient(token)
     build_bot(
         service,
         addon_service,
@@ -68,6 +72,7 @@ async def _run() -> None:
         tmdb_service,
         bot_client,
         channel_media_service,
+        bot_api,
     )
 
     await service.start()
@@ -90,6 +95,8 @@ async def _run() -> None:
         await service.shutdown()
         if bot_client is not None:
             await bot_client.stop()
+        if bot_api is not None:
+            await bot_api.close()
         await addon_service.close()
         await channel_media_service.close()
         await tmdb_service.close()

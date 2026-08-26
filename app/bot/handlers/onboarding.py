@@ -12,17 +12,10 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from app.bot.auth import is_stream_admin
-from app.bot.handlers.info import HELP_TEXT
+from app.bot.formatting import format_main_menu
 from app.config.settings import Settings
+from app.telegram.bot_api import BotAPIClient, BotAPIError
 
-_ADMIN_TEXT = (
-    "*Bem-vindo ao Telerion*\n\n"
-    "Você é administrador do canal e pode controlar as sessões por este chat.\n\n"
-    f"{HELP_TEXT}\n\n"
-    "Use /find para buscar na internet ou /canal para reproduzir um filme já enviado "
-    "ao canal. O Telerion prioriza RTMP, usa a chamada normal como alternativa e apaga "
-    "os arquivos temporários depois da reprodução."
-)
 _DENIED_TEXT = (
     "Você não é administrador do canal configurado. Por isso, nenhum comando de "
     "controle enviado aqui será executado."
@@ -51,7 +44,10 @@ def _save(path: Path, seen: dict[str, set[int]]) -> None:
 
 
 def register(
-    app: Client, settings: Settings, path: Path = Path("/app/data/onboarding.json")
+    app: Client,
+    settings: Settings,
+    path: Path = Path("/app/data/onboarding.json"),
+    bot_api: BotAPIClient | None = None,
 ) -> None:
     """Envia uma única apresentação por usuário e por estado de autorização."""
     seen = _load(path)
@@ -67,7 +63,27 @@ def register(
             bucket = "admins" if authorized else "denied"
             if user.id in seen[bucket]:
                 return
-            await message.reply_text(_ADMIN_TEXT if authorized else _DENIED_TEXT)
+            if authorized:
+                name = getattr(user, "first_name", None) or "administrador"
+                sent = False
+                if bot_api is not None and message.chat is not None and message.chat.id is not None:
+                    try:
+                        await bot_api.send_rich_message(
+                            message.chat.id,
+                            format_main_menu(name, None),
+                            receiver_user_id=user.id,
+                        )
+                        sent = True
+                    except BotAPIError:
+                        pass
+                if not sent:
+                    await message.reply_text(
+                        f"Olá, {name}. Bem-vindo ao Telerion.\n\n"
+                        "Use os botões do painel ou /find para buscar na internet e "
+                        "/canal para procurar filmes enviados ao canal."
+                    )
+            else:
+                await message.reply_text(_DENIED_TEXT)
             updated = {
                 key: values | ({user.id} if key == bucket else set())
                 for key, values in seen.items()
