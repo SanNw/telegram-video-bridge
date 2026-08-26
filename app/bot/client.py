@@ -22,6 +22,7 @@ from app.bot.handlers import (
     addons,
     channel,
     info,
+    menu,
     onboarding,
     playback,
     queue,
@@ -33,6 +34,7 @@ from app.services.addon_service import AddonService
 from app.services.channel_media_service import ChannelMediaService
 from app.services.playback_service import PlaybackService
 from app.services.tmdb_service import TMDBService
+from app.telegram.bot_api import BotAPIClient
 
 
 def build_bot(
@@ -42,6 +44,7 @@ def build_bot(
     tmdb_service: TMDBService,
     bot_client: Client | None = None,
     channel_media_service: ChannelMediaService | None = None,
+    bot_api: BotAPIClient | None = None,
 ) -> Client:
     """Registra todos os handlers de comando e devolve o client de sessão.
 
@@ -67,6 +70,16 @@ def build_bot(
         _register_controls(bot_client, bot_authorized)
         if channel_media_service is not None:
             channel.register(bot_client, channel_media_service, bot_authorized)
+        if bot_api is not None:
+            menu.register(
+                bot_client,
+                playback_service,
+                addon_service,
+                bot_authorized,
+                owner,
+                bot_api,
+                channel_media_service,
+            )
 
     search_client = bot_client if bot_client is not None else app
     addons.register_search(
@@ -74,6 +87,7 @@ def build_bot(
         addon_service,
         bot_authorized if bot_client is not None else authorized,
         buttons_enabled=bot_client is not None,
+        bot_api=bot_api,
     )
 
     unauthorized.register(app, authorized, search_commands=bot_client is None)

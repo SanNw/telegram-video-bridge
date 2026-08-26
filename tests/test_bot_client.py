@@ -102,3 +102,28 @@ def test_build_bot_keeps_search_fallback_off_session_client_when_bot_is_separate
 
     register.assert_any_call(fake_client, ANY, search_commands=False)
     register.assert_any_call(fake_bot_client, ANY)
+
+
+def test_build_bot_wires_rich_menu_and_movie_flow(make_settings: Callable[..., Settings]) -> None:
+    settings = make_settings(authorized_user_ids=[1])
+    fake_client, _ = _make_fake_client()
+    fake_bot_client, _ = _make_fake_client()
+    fake_service = MagicMock(client=fake_client)
+    bot_api = MagicMock()
+
+    with (
+        patch("app.bot.client.menu.register") as register_menu,
+        patch("app.bot.client.addons.register_search") as register_search,
+    ):
+        build_bot(
+            fake_service,
+            MagicMock(),
+            settings,
+            MagicMock(),
+            bot_client=fake_bot_client,
+            bot_api=bot_api,
+        )
+
+    register_menu.assert_called_once()
+    assert register_menu.call_args.args[-2] is bot_api
+    assert register_search.call_args.kwargs["bot_api"] is bot_api
