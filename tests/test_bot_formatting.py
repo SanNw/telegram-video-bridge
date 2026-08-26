@@ -2,22 +2,32 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from app.addon_system.base import SearchResult, StreamCandidate
+from app.addon_system.manager import AddonInfo
 from app.bot.formatting import (
+    format_addons_screen,
+    format_candidate_page,
+    format_controls_screen,
+    format_main_menu,
+    format_movie_details,
+    format_movie_results,
     format_now_playing,
     format_queue,
+    format_queue_screen,
     format_search_results,
     format_status,
     format_stream_buttons,
     format_timedelta,
     format_tmdb_rich_message,
     format_uptime,
+    rich_callback_actions,
 )
 from app.player.models import LoopMode, PlaybackState, QueueItem
 from app.services.models import ServiceStatus
-from app.services.tmdb_service import TMDBCastMember, TMDBMetadata
+from app.services.tmdb_service import TMDBCastMember, TMDBMetadata, TMDBMovie
 from app.streaming.models import FFmpegProcessState, HealthStatus
 from app.telegram.models import CallHealth, CallState
 from app.utils.sanitize import MediaSource, SourceType
@@ -358,3 +368,153 @@ def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
     ]
     markup = format_stream_buttons(candidates)
     assert markup.inline_keyboard[0][0].text == "▶️ 🇺🇸 archive_org (1080p Legendado)"
+
+
+def test_main_menu_has_expected_actions() -> None:
+    message = format_main_menu("Rafael", "Cinema")
+
+    assert rich_callback_actions(message) == {
+        "menu:find",
+        "menu:channel",
+        "menu:now",
+        "menu:queue",
+        "menu:controls",
+        "menu:addons",
+        "menu:help",
+        "menu:admin",
+    }
+    assert "Rafael" in json.dumps(message, ensure_ascii=False)
+    assert "Cinema" in json.dumps(message, ensure_ascii=False)
+
+
+def test_movie_results_exposes_selection_and_pagination() -> None:
+    movies = [
+        TMDBMovie(
+            id=index,
+            title=f"Movie {index}",
+            original_title=None,
+            overview=None,
+            poster_url=None,
+            vote_average=None,
+            release_date="2020-01-01",
+        )
+        for index in range(7)
+    ]
+
+    message = format_movie_results(movies, page=0, page_size=5)
+
+    assert rich_callback_actions(message) == {
+        "movie:0",
+        "movie:1",
+        "movie:2",
+        "movie:3",
+        "movie:4",
+        "catalog:1",
+        "flow:cancel",
+    }
+
+
+def test_movie_details_exposes_source_search_and_back() -> None:
+    movie = TMDBMovie(
+        id=603,
+        title="The Matrix",
+        original_title="The Matrix",
+        overview=None,
+        poster_url=None,
+        vote_average=8.2,
+        release_date="1999-03-31",
+    )
+    metadata = TMDBMetadata(
+        title="The Matrix",
+        original_title="The Matrix",
+        overview="A realidade não é o que parece.",
+        poster_url=None,
+        vote_average=8.2,
+        genres=["Ação"],
+        release_date="1999-03-31",
+        cast=[],
+        backdrop_urls=[],
+    )
+
+    message = format_movie_details(movie, metadata)
+
+    assert rich_callback_actions(message) == {"sources:0", "flow:back", "flow:cancel"}
+    assert "The Matrix" in json.dumps(message, ensure_ascii=False)
+
+
+def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
+    candidates = [
+        (
+            str(index),
+            SearchResult("tt0133093", "The Matrix", 1999, "stremio"),
+            StreamCandidate(
+                title="The Matrix 1999 Dublado",
+                quality="1080p",
+                seeds=200 - index,
+                size_bytes=2 * 1024**3,
+            ),
+        )
+        for index in range(6)
+    ]
+
+    message = format_candidate_page(candidates, page=0, page_size=5)
+    text = json.dumps(message, ensure_ascii=False)
+
+    assert "1080p" in text
+    assert "200 seeders" in text
+    assert rich_callback_actions(message) == {
+        "source:0",
+        "source:1",
+        "source:2",
+        "source:3",
+        "source:4",
+        "sources:1",
+        "flow:back",
+        "flow:refresh",
+        "flow:cancel",
+    }
+
+
+def test_controls_screen_exposes_every_playback_action() -> None:
+    status = ServiceStatus(
+        streaming=HealthStatus(
+            state=FFmpegProcessState.RUNNING,
+            pid=123,
+            current_source="/media/a.mp4",
+            restart_count=0,
+            last_error=None,
+        ),
+        call=CallHealth(
+            state=CallState.CONNECTED, chat_id=-100, reconnect_count=0, last_error=None
+        ),
+        queue_length=1,
+        loop_mode=LoopMode.OFF,
+        degraded=False,
+        degraded_reason=None,
+    )
+
+    actions = rich_callback_actions(format_controls_screen(status))
+
+    assert {
+        "control:pause",
+        "control:resume",
+        "control:stop",
+        "control:skip",
+        "control:restart",
+        "control:loop:off",
+        "control:loop:track",
+        "control:loop:queue",
+        "control:volume:50",
+        "control:volume:100",
+        "control:volume:150",
+        "control:volume:200",
+        "menu:home",
+    } <= actions
+
+
+def test_queue_and_addon_screens_return_home() -> None:
+    state = PlaybackState(items=[_item("b.mp4")], current=_item("a.mp4"), loop_mode=LoopMode.OFF)
+    addons = [AddonInfo(name="stremio", version="1", description="", enabled=True)]
+
+    assert rich_callback_actions(format_queue_screen(state)) == {"menu:home"}
+    assert rich_callback_actions(format_addons_screen(addons)) == {"menu:home"}

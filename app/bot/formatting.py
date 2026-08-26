@@ -250,6 +250,221 @@ def _format_stream_button_label(addon_name: str, candidate: StreamCandidate) -> 
     return label[:64]
 
 
+def _button(text: str, callback_data: str, style: str = "primary") -> dict[str, object]:
+    return {"text": text, "style": style, "callback_data": callback_data}
+
+
+def _button_row(*buttons: dict[str, object]) -> dict[str, object]:
+    return {"type": "buttons", "buttons": list(buttons), "align": "center"}
+
+
+def format_main_menu(first_name: str, channel_title: str | None) -> dict[str, object]:
+    destination = f" no canal {channel_title}" if channel_title else ""
+    return {
+        "blocks": [
+            {"type": "heading", "text": f"Olá, {first_name} 👋", "size": 2},
+            {
+                "type": "paragraph",
+                "text": f"Controle o Telerion{destination} pelo painel abaixo.",
+            },
+            _button_row(
+                _button("🎬 Buscar filme", "menu:find"),
+                _button("📺 Buscar no canal", "menu:channel"),
+            ),
+            _button_row(
+                _button("▶️ Tocando agora", "menu:now"),
+                _button("📋 Ver fila", "menu:queue"),
+            ),
+            _button_row(
+                _button("⏯ Controles", "menu:controls"),
+                _button("🧩 Addons", "menu:addons"),
+            ),
+            _button_row(
+                _button("❓ Ajuda", "menu:help"),
+                _button("⚙️ Administração", "menu:admin"),
+            ),
+        ]
+    }
+
+
+def format_movie_results(
+    movies: list[TMDBMovie], page: int, page_size: int = 5
+) -> dict[str, object]:
+    start = page * page_size
+    visible = movies[start : start + page_size]
+    total_pages = max(1, (len(movies) + page_size - 1) // page_size)
+    blocks: list[dict[str, object]] = [
+        {"type": "heading", "text": "Escolha o filme", "size": 2},
+        {"type": "paragraph", "text": f"Página {page + 1} de {total_pages}"},
+    ]
+    for index, movie in enumerate(visible, start=start):
+        year = movie.release_date[:4] if movie.release_date else "—"
+        blocks.append(_button_row(_button(f"{movie.title} ({year})", f"movie:{index}")))
+    navigation: list[dict[str, object]] = []
+    if page > 0:
+        navigation.append(_button("◀ Anterior", f"catalog:{page - 1}"))
+    if start + page_size < len(movies):
+        navigation.append(_button("Próxima ▶", f"catalog:{page + 1}"))
+    if navigation:
+        blocks.append(_button_row(*navigation))
+    blocks.append(_button_row(_button("Cancelar", "flow:cancel", "danger")))
+    return {"blocks": blocks}
+
+
+def format_movie_details(movie: TMDBMovie, metadata: TMDBMetadata) -> dict[str, object]:
+    year = metadata.release_date[:4] if metadata.release_date else "—"
+    rating = f"{metadata.vote_average:.1f}" if metadata.vote_average else "—"
+    genres = ", ".join(metadata.genres) or "—"
+    blocks: list[dict[str, object]] = [
+        {"type": "heading", "text": f"{metadata.title} ({year})", "size": 2},
+        {"type": "paragraph", "text": f"⭐ {rating} · {genres}"},
+        {
+            "type": "paragraph",
+            "text": metadata.overview or movie.overview or "Sinopse não disponível.",
+        },
+    ]
+    if metadata.poster_url:
+        blocks.insert(1, {"type": "image", "media": metadata.poster_url})
+    blocks.extend(
+        [
+            _button_row(_button("Ver fontes", "sources:0")),
+            _button_row(
+                _button("◀ Voltar", "flow:back"),
+                _button("Cancelar", "flow:cancel", "danger"),
+            ),
+        ]
+    )
+    return {"blocks": blocks}
+
+
+def format_candidate_page(
+    candidates: list[tuple[str, SearchResult, StreamCandidate]],
+    page: int,
+    page_size: int = 5,
+) -> dict[str, object]:
+    start = page * page_size
+    visible = candidates[start : start + page_size]
+    blocks: list[dict[str, object]] = [
+        {"type": "heading", "text": "Escolha a fonte", "size": 2},
+    ]
+    for token, result, candidate in visible:
+        blocks.append(
+            _button_row(
+                _button(
+                    _format_stream_button_label(result.addon_name, candidate),
+                    f"source:{token}",
+                )
+            )
+        )
+    navigation: list[dict[str, object]] = []
+    if page > 0:
+        navigation.append(_button("◀ Anterior", f"sources:{page - 1}"))
+    if start + page_size < len(candidates):
+        navigation.append(_button("Próxima ▶", f"sources:{page + 1}"))
+    if navigation:
+        blocks.append(_button_row(*navigation))
+    blocks.extend(
+        [
+            _button_row(_button("Atualizar", "flow:refresh")),
+            _button_row(
+                _button("◀ Voltar", "flow:back"),
+                _button("Cancelar", "flow:cancel", "danger"),
+            ),
+        ]
+    )
+    return {"blocks": blocks}
+
+
+def format_now_playing_screen(state: PlaybackState) -> dict[str, object]:
+    text = (
+        f"▶️ {state.current.source.raw}"
+        if state.current is not None
+        else "Nada está tocando agora."
+    )
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Tocando agora", "size": 2},
+            {"type": "paragraph", "text": text},
+            _button_row(_button("Início", "menu:home")),
+        ]
+    }
+
+
+def format_queue_screen(state: PlaybackState) -> dict[str, object]:
+    items = [item.source.raw for item in state.items]
+    text = "\n".join(f"{index}. {source}" for index, source in enumerate(items, start=1))
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Fila", "size": 2},
+            {"type": "paragraph", "text": text or "Fila vazia."},
+            _button_row(_button("Início", "menu:home")),
+        ]
+    }
+
+
+def format_controls_screen(status: ServiceStatus) -> dict[str, object]:
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Controles", "size": 2},
+            {
+                "type": "paragraph",
+                "text": f"Streaming: {status.streaming.state.value} · Fila: {status.queue_length}",
+            },
+            _button_row(
+                _button("Pausar", "control:pause"),
+                _button("Retomar", "control:resume"),
+            ),
+            _button_row(
+                _button("Parar", "control:stop", "danger"),
+                _button("Pular", "control:skip"),
+                _button("Reiniciar", "control:restart"),
+            ),
+            _button_row(
+                _button("Loop off", "control:loop:off"),
+                _button("Faixa", "control:loop:track"),
+                _button("Fila", "control:loop:queue"),
+            ),
+            _button_row(
+                *(
+                    _button(f"{volume}%", f"control:volume:{volume}")
+                    for volume in (50, 100, 150, 200)
+                )
+            ),
+            _button_row(_button("Início", "menu:home")),
+        ]
+    }
+
+
+def format_addons_screen(addons: list[AddonInfo]) -> dict[str, object]:
+    text = "\n".join(
+        f"{'✅' if addon.enabled else '⛔'} {addon.name} v{addon.version}" for addon in addons
+    )
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Addons", "size": 2},
+            {"type": "paragraph", "text": text or "Nenhum addon instalado."},
+            _button_row(_button("Início", "menu:home")),
+        ]
+    }
+
+
+def rich_callback_actions(message: dict[str, object]) -> set[str]:
+    actions: set[str] = set()
+    blocks = message.get("blocks")
+    if not isinstance(blocks, list):
+        return actions
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "buttons":
+            continue
+        buttons = block.get("buttons")
+        if not isinstance(buttons, list):
+            continue
+        for button in buttons:
+            if isinstance(button, dict) and isinstance(button.get("callback_data"), str):
+                actions.add(button["callback_data"])
+    return actions
+
+
 def _escape_html(text: str) -> str:
     """Escapa manualmente `&`, `<`, `>` — `InputRichMessage(html=...)` não escapa automaticamente."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
