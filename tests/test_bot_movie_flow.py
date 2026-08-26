@@ -5,12 +5,20 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from app.addon_system.base import SearchResult, StreamCandidate
 from app.bot.auth import build_authorized_filter
 from app.bot.handlers import addons
 from app.services.tmdb_service import TMDBMetadata, TMDBMovie
-from tests.test_bot_handlers import FakeCallbackQuery, FakeClient, FakeMessage, dispatch_callback
+from app.telegram.bot_api import BotAPIError
+from tests.test_bot_handlers import (
+    FakeCallbackQuery,
+    FakeClient,
+    FakeMessage,
+    dispatch,
+    dispatch_callback,
+)
 
 
 class _RichAddonService:
@@ -33,6 +41,9 @@ class _RichAddonService:
         )
 
     def catalog(self) -> list[TMDBMovie]:
+        return self.movies
+
+    async def search_catalog(self, _query: str) -> list[TMDBMovie]:
         return self.movies
 
     async def select_catalog_movie(
@@ -154,3 +165,74 @@ async def test_source_callback_edits_progress_then_success(make_settings: Any) -
     assert len(bot_api.edited) == 2
     assert "Preparando" in json.dumps(bot_api.edited[0]["rich_message"], ensure_ascii=False)
     assert "fila" in json.dumps(bot_api.edited[1]["rich_message"], ensure_ascii=False)
+
+
+async def test_catalog_sources_refresh_back_and_cancel_update_same_message(
+    make_settings: Any,
+) -> None:
+    client = FakeClient()
+    service = _RichAddonService()
+    bot_api = _FakeBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(client, service, authorized, True, bot_api=bot_api)  # type: ignore[arg-type]
+
+    await dispatch_callback(client, _callback("movie:0", 111))
+    for action in ("sources:0", "flow:refresh", "flow:back", "flow:cancel"):
+        await dispatch_callback(client, _callback(action, 111))
+
+    assert service.selected == [0, 0]
+    assert len(bot_api.edited) == 4
+    assert "Seleção cancelada" in json.dumps(bot_api.edited[-1], ensure_ascii=False)
+
+
+async def test_expired_source_token_returns_alert(make_settings: Any) -> None:
+    client = FakeClient()
+    bot_api = _FakeBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(
+        client, _RichAddonService(), authorized, True, bot_api=bot_api
+    )  # type: ignore[arg-type]
+    callback = _callback("source:99", 111)
+
+    await dispatch_callback(client, callback)
+
+    assert callback.answers[-1] == ("Essa fonte expirou.", True)
+
+
+async def test_bot_api_rejection_becomes_callback_alert(make_settings: Any) -> None:
+    class _FailingBotAPI(_FakeBotAPI):
+        async def send_rich_message(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+            raise BotAPIError("rejected")
+
+    client = FakeClient()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(
+        client, _RichAddonService(), authorized, True, bot_api=_FailingBotAPI()
+    )  # type: ignore[arg-type]
+    callback = _callback("movie:0", 111)
+
+    await dispatch_callback(client, callback)
+
+    assert callback.answers[-1] == ("rejected", True)
+
+
+async def test_legacy_catalog_find_pagination_and_movie_selection(make_settings: Any) -> None:
+    client = FakeClient()
+    client.send_message = AsyncMock()  # type: ignore[attr-defined]
+    service = _RichAddonService()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(client, service, authorized, True)  # type: ignore[arg-type]
+    message = FakeMessage("/find matrix", 111)
+
+    assert await dispatch(client, message)
+    assert message.reply_markups[-1] is not None
+
+    page = _callback("catalog:0", 111)
+    page.edit_message_caption = AsyncMock()  # type: ignore[attr-defined]
+    await dispatch_callback(client, page)
+    page.edit_message_caption.assert_awaited_once()  # type: ignore[attr-defined]
+
+    movie = _callback("movie:0", 111)
+    await dispatch_callback(client, movie)
+    assert client.send_message.await_count == 1  # type: ignore[attr-defined]
+    assert movie.edited_reply_markup == [None]

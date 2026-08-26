@@ -113,3 +113,30 @@ async def test_close_does_not_close_injected_http_client() -> None:
 
     assert not http.is_closed
     await http.aclose()
+
+
+async def test_transport_and_invalid_result_errors_are_sanitized() -> None:
+    def broken(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(broken))
+    with pytest.raises(BotAPIError, match="ConnectError"):
+        await BotAPIClient("123:secret", http=http).send_rich_message(1, {"blocks": []})
+    await http.aclose()
+
+    invalid = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json={"ok": True, "result": True})
+        )
+    )
+    with pytest.raises(BotAPIError, match="invalid result"):
+        await BotAPIClient("123:secret", http=invalid).send_rich_message(1, {"blocks": []})
+    await invalid.aclose()
+
+
+async def test_close_closes_owned_http_client() -> None:
+    client = BotAPIClient("123:secret")
+
+    await client.close()
+
+    assert client._http.is_closed

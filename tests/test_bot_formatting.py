@@ -10,11 +10,15 @@ from app.addon_system.manager import AddonInfo
 from app.bot.formatting import (
     format_addons_screen,
     format_candidate_page,
+    format_catalog_buttons,
+    format_catalog_page,
     format_controls_screen,
     format_main_menu,
+    format_movie_card,
     format_movie_details,
     format_movie_results,
     format_now_playing,
+    format_now_playing_screen,
     format_queue,
     format_queue_screen,
     format_search_results,
@@ -518,3 +522,67 @@ def test_queue_and_addon_screens_return_home() -> None:
 
     assert rich_callback_actions(format_queue_screen(state)) == {"menu:home"}
     assert rich_callback_actions(format_addons_screen(addons)) == {"menu:home"}
+
+
+def test_catalog_legacy_formatters_cover_both_navigation_directions() -> None:
+    movies = [
+        TMDBMovie(index, f"Movie {index}", None, None, None, 7.0, "2020-01-01")
+        for index in range(7)
+    ]
+
+    assert "página 1/2" in format_catalog_page(movies, 0)
+    first = format_catalog_buttons(movies, 0)
+    second = format_catalog_buttons(movies, 1)
+
+    assert first.inline_keyboard[-1][0].callback_data == "catalog:1"
+    assert second.inline_keyboard[-1][0].callback_data == "catalog:0"
+
+
+def test_movie_card_truncates_long_overview_and_handles_missing_values() -> None:
+    movie = TMDBMovie(1, "Movie", None, None, None, None, None)
+    metadata = TMDBMetadata(
+        title="Movie",
+        original_title=None,
+        overview="x" * 700,
+        poster_url=None,
+        vote_average=None,
+        genres=[],
+        release_date=None,
+        cast=[],
+        backdrop_urls=[],
+    )
+
+    text = format_movie_card(movie, metadata)
+
+    assert f"{'x' * 647}..." in text
+
+
+def test_rich_status_screens_cover_empty_and_current_states() -> None:
+    empty = PlaybackState(items=[], current=None, loop_mode=LoopMode.OFF)
+    current = PlaybackState(items=[], current=_item("a.mp4"), loop_mode=LoopMode.OFF)
+
+    assert "Nada está tocando" in str(format_now_playing_screen(empty))
+    assert "a.mp4" in str(format_now_playing_screen(current))
+    assert "Fila vazia" in str(format_queue_screen(empty))
+    assert "Nenhum addon" in str(format_addons_screen([]))
+
+
+def test_candidate_second_page_has_previous_navigation() -> None:
+    candidates = [
+        (
+            str(index),
+            _search_result(),
+            StreamCandidate(title="Movie", quality="1080p", seeds=index),
+        )
+        for index in range(6)
+    ]
+
+    actions = rich_callback_actions(format_candidate_page(candidates, page=1))
+
+    assert "sources:0" in actions
+    assert "source:5" in actions
+
+
+def test_rich_callback_actions_ignores_malformed_blocks() -> None:
+    assert rich_callback_actions({"blocks": [None, {"type": "buttons", "buttons": None}]}) == set()
+    assert rich_callback_actions({"blocks": "invalid"}) == set()

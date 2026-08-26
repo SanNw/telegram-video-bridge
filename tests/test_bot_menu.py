@@ -115,3 +115,64 @@ async def test_find_button_consumes_next_text_without_slash_command(make_setting
 
     addons.search_catalog.assert_awaited_once_with("The Matrix")  # type: ignore[attr-defined]
     assert "movie:0" in str(bot_api.sent[-1]["rich_message"])
+
+
+async def test_remaining_control_buttons_call_service_methods(make_settings: Any) -> None:
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    playback = _FakeService()
+    playback.pause = AsyncMock()  # type: ignore[method-assign]
+    playback.resume = AsyncMock()  # type: ignore[method-assign]
+    playback.stop_playback = AsyncMock()  # type: ignore[method-assign]
+    playback.skip = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    bot_api = _FakeBotAPI()
+    menu.register(
+        client,
+        playback,
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        bot_api,
+    )
+
+    for action in (
+        "control:pause",
+        "control:resume",
+        "control:stop",
+        "control:skip",
+        "control:loop:queue",
+    ):
+        await dispatch_callback(client, _callback(action, 111))
+
+    playback.pause.assert_awaited_once()  # type: ignore[attr-defined]
+    playback.resume.assert_awaited_once()  # type: ignore[attr-defined]
+    playback.stop_playback.assert_awaited_once()  # type: ignore[attr-defined]
+    playback.skip.assert_awaited_once()  # type: ignore[attr-defined]
+    assert playback.loop_calls
+
+
+async def test_channel_prompt_consumes_text_and_renders_results(make_settings: Any) -> None:
+    class _Channel:
+        async def search(self, query: str) -> list[Any]:
+            assert query == "matrix"
+            return [SimpleNamespace(message_id=9, title="Matrix 1080p")]
+
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    bot_api = _FakeBotAPI()
+    menu.register(
+        client,
+        _FakeService(),
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        bot_api,
+        _Channel(),  # type: ignore[arg-type]
+    )
+    await dispatch_callback(client, _callback("menu:channel", 111))
+    reply = FakeMessage("matrix", 111)
+    reply.chat = SimpleNamespace(id=-1001)
+
+    await dispatch(client, reply)
+
+    assert "channel:9" in str(bot_api.sent[-1]["rich_message"])
