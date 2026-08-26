@@ -219,7 +219,7 @@ def format_stream_buttons(
 ) -> InlineKeyboardMarkup:
     """Monta os botões inline da Rich Message de `/find`, um por addon resolvido.
 
-    `candidates` vem de `AddonService.resolve_top_candidates()`: tokens curtos
+    `candidates` vem de `AddonService.resolve_candidates()`: tokens curtos
     que identificam cada `(SearchResult, StreamCandidate)` para o handler de
     callback query resolver de volta em `AddonService.pick_candidate`.
     """

@@ -313,7 +313,7 @@ class _FakeAddonService:
         self.pick_calls.append((index, requested_by))
         return self.pick_result
 
-    async def resolve_top_candidates(self) -> list[tuple[str, SearchResult, StreamCandidate]]:
+    async def resolve_candidates(self) -> list[tuple[str, SearchResult, StreamCandidate]]:
         return self.resolve_candidates_result
 
     async def pick_candidate(self, token: str, requested_by: int) -> tuple[str, int]:

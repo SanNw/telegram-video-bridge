@@ -360,27 +360,82 @@ async def test_pick_success_plays_best_stream(
     playback.play.assert_awaited_once_with("https://example.com/best.mp4", 111)
 
 
-async def test_resolve_top_candidates_dedups_by_addon(
+async def test_resolve_candidates_filters_deduplicates_and_ranks(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    service._last_metadata = TMDBMetadata(
+        title="The Matrix",
+        original_title="The Matrix",
+        overview=None,
+        poster_url=None,
+        vote_average=8.2,
+        genres=["Action"],
+        release_date="1999-03-31",
+        cast=[],
+        backdrop_urls=[],
+    )
+    service._last_results = [
+        SearchResult(media_id="tt0133093", title="The Matrix", year=1999, addon_name="stremio")
+    ]
+    fake_manager.stream_results_by_addon = {
+        "stremio": [
+            StreamCandidate(title="The Matrix 1999 4K", quality="2160p", seeds=500),
+            StreamCandidate(title="The Matrix Reloaded 2003", quality="1080p", seeds=900),
+            StreamCandidate(title="The Matrix 1999", quality="720p", seeds=300),
+            StreamCandidate(title="The Matrix 1999", quality="1080p", seeds=None),
+            StreamCandidate(title="The Matrix 1999 Dublado", quality="1080p", seeds=20),
+            StreamCandidate(title="The Matrix 1999", quality="1080p", seeds=200),
+            StreamCandidate(title="The Matrix 1999", quality="1080p", seeds=200),
+            StreamCandidate(
+                title="The Matrix 1999",
+                quality="1080p",
+                seeds=999,
+                size_bytes=4 * 1024**3 + 1,
+            ),
+            StreamCandidate(title="The Matrix 1999", quality=None, seeds=1000),
+            StreamCandidate(title="The Matrix 1999 2K", quality=None, seeds=1000),
+        ]
+    }
+
+    candidates = await service.resolve_candidates()
+
+    assert [(candidate.quality, candidate.seeds) for _, _, candidate in candidates] == [
+        ("1080p", 200),
+        ("1080p", 20),
+        ("1080p", None),
+        ("720p", 300),
+    ]
+
+
+async def test_resolve_candidates_deduplicates_equivalent_sources(
     service: AddonService, fake_manager: _FakeManager
 ) -> None:
     fake_manager.search_results = [
         SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
-        SearchResult(media_id="2", title="Movie A (dup)", addon_name="archive_org"),
+        SearchResult(media_id="2", title="Movie A", addon_name="archive_org"),
         SearchResult(media_id="3", title="Movie A", addon_name="stremio"),
     ]
     await service.find("movie")
     fake_manager.stream_results_by_addon = {
-        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
-        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s", quality="1080p")],
+        "archive_org": [
+            StreamCandidate(url="https://a.example/1.mp4", title="Movie A", quality="720p")
+        ],
+        "stremio": [
+            StreamCandidate(url="https://s.example/1.mp4", title="Movie A", quality="1080p")
+        ],
     }
 
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
 
-    assert [addon for addon, _ in fake_manager.get_streams_calls] == ["archive_org", "stremio"]
-    assert [result.addon_name for _, result, _ in candidates] == ["archive_org", "stremio"]
+    assert fake_manager.get_streams_calls == [
+        ("archive_org", "1"),
+        ("archive_org", "2"),
+        ("stremio", "3"),
+    ]
+    assert [result.addon_name for _, result, _ in candidates] == ["stremio", "archive_org"]
 
 
-async def test_resolve_top_candidates_isolates_addon_failure(
+async def test_resolve_candidates_isolates_addon_failure(
     service: AddonService, fake_manager: _FakeManager
 ) -> None:
     fake_manager.search_results = [
@@ -390,15 +445,17 @@ async def test_resolve_top_candidates_isolates_addon_failure(
     await service.find("movie")
     fake_manager.stream_results_by_addon = {
         "archive_org": RuntimeError("boom"),
-        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s")],
+        "stremio": [
+            StreamCandidate(url="https://s.example/1.mp4", title="Movie A", quality="1080p")
+        ],
     }
 
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
 
     assert [result.addon_name for _, result, _ in candidates] == ["stremio"]
 
 
-async def test_resolve_top_candidates_skips_addon_with_no_streams(
+async def test_resolve_candidates_skips_addon_with_no_streams(
     service: AddonService, fake_manager: _FakeManager
 ) -> None:
     fake_manager.search_results = [
@@ -408,10 +465,12 @@ async def test_resolve_top_candidates_skips_addon_with_no_streams(
     await service.find("movie")
     fake_manager.stream_results_by_addon = {
         "archive_org": [],
-        "stremio": [StreamCandidate(url="https://s.example/1.mp4", title="s")],
+        "stremio": [
+            StreamCandidate(url="https://s.example/1.mp4", title="Movie A", quality="1080p")
+        ],
     }
 
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
 
     assert [result.addon_name for _, result, _ in candidates] == ["stremio"]
 
@@ -424,9 +483,11 @@ async def test_pick_candidate_success_plays_and_returns_addon_name(
     ]
     await service.find("movie")
     fake_manager.stream_results_by_addon = {
-        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
+        "archive_org": [
+            StreamCandidate(url="https://a.example/1.mp4", title="Movie A", quality="1080p")
+        ],
     }
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
     token = candidates[0][0]
 
     addon_name, position = await service.pick_candidate(token, requested_by=111)
@@ -449,9 +510,11 @@ async def test_pick_candidate_token_invalidated_by_new_find(
     ]
     await service.find("movie")
     fake_manager.stream_results_by_addon = {
-        "archive_org": [StreamCandidate(url="https://a.example/1.mp4", title="a")],
+        "archive_org": [
+            StreamCandidate(url="https://a.example/1.mp4", title="Movie A", quality="1080p")
+        ],
     }
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
     token = candidates[0][0]
 
     await service.find("movie again")
@@ -475,7 +538,9 @@ async def test_pick_resolves_torrent_candidate_and_plays_path(
         SearchResult(media_id="1", title="Movie", addon_name="archive_org")
     ]
     await service.find("movie")
-    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    torrent_candidate = StreamCandidate(
+        url=None, info_hash="abc123", title="Movie A", quality="1080p"
+    )
     fake_manager.stream_results = [torrent_candidate]
     torrent_service.resolve_result = "/media/torrents/movie.mkv"
 
@@ -546,9 +611,11 @@ async def test_pick_candidate_resolves_torrent_and_plays_path(
         SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
     ]
     await service.find("movie")
-    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    torrent_candidate = StreamCandidate(
+        url=None, info_hash="abc123", title="Movie A", quality="1080p"
+    )
     fake_manager.stream_results_by_addon = {"archive_org": [torrent_candidate]}
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
     token = candidates[0][0]
     torrent_service.resolve_result = "/media/torrents/movie.mkv"
 
@@ -568,9 +635,11 @@ async def test_pick_candidate_does_not_fall_back_on_torrent_timeout(
         SearchResult(media_id="1", title="Movie A", addon_name="archive_org"),
     ]
     await service.find("movie")
-    torrent_candidate = StreamCandidate(url=None, info_hash="abc123", title="torrent")
+    torrent_candidate = StreamCandidate(
+        url=None, info_hash="abc123", title="Movie A", quality="1080p"
+    )
     fake_manager.stream_results_by_addon = {"archive_org": [torrent_candidate]}
-    candidates = await service.resolve_top_candidates()
+    candidates = await service.resolve_candidates()
     token = candidates[0][0]
     torrent_service.resolve_result = TorrentTimeoutError("timeout")
 

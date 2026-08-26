@@ -27,9 +27,9 @@ from app.services.playback_service import PlaybackService
 from app.services.stremio_client import StremioAddonClient
 from app.services.tmdb_service import TMDBMetadata, TMDBMovie, TMDBService
 from app.services.torrent_service import TorrentService
-from app.utils.language_detection import has_portuguese_audio
+from app.utils.language_detection import detect_language_flag, has_portuguese_audio
 from app.utils.logging import get_logger
-from app.utils.title_matching import matches_any
+from app.utils.title_matching import matches_any, matches_movie_release, stream_resolution
 
 _logger = get_logger("services")
 
@@ -318,27 +318,18 @@ class AddonService:
     async def close(self) -> None:
         await self._subtitles.close()
 
-    async def resolve_top_candidates(self) -> list[tuple[str, SearchResult, StreamCandidate]]:
-        """Resolve o melhor stream de cada addon distinto na última busca (`/find`).
-
-        Usado para montar os botões inline da resposta de `/find`: no máximo
-        1 candidato por addon (o primeiro resultado desse addon na busca,
-        melhor stream dentre as que respeitam `_MAX_STREAM_SIZE_BYTES` — nem
-        todo addon filtra por tamanho por conta própria, ex.: `archive_org`
-        não carrega `size_bytes`). Falha ou timeout ao resolver um addon, ou
-        todas as streams excedendo o limite, só omite o candidato desse
-        addon, nunca derruba os demais (mesmo isolamento de
-        `AddonManager._search_one`). Reseta e repopula `self._candidates` —
-        tokens de uma resolução anterior deixam de ser válidos em
-        `pick_candidate`.
-        """
+    async def resolve_candidates(self) -> list[tuple[str, SearchResult, StreamCandidate]]:
+        """Coleta e ordena todas as fontes 1080p/720p da última busca."""
         self._candidates = {}
-        seen_addons: set[str] = set()
-        candidates: list[tuple[str, SearchResult, StreamCandidate]] = []
+        metadata = self._last_metadata
+        year = (
+            int(metadata.release_date[:4])
+            if metadata and metadata.release_date and metadata.release_date[:4].isdigit()
+            else None
+        )
+        titles = [metadata.title, metadata.original_title] if metadata else []
+        collected: list[tuple[SearchResult, StreamCandidate]] = []
         for result in self._last_results:
-            if result.addon_name in seen_addons:
-                continue
-            seen_addons.add(result.addon_name)
             try:
                 streams = await self._manager.get_streams(result.addon_name, result.media_id)
             except Exception as exc:  # noqa: BLE001 - isola falha de um addon dos demais
@@ -348,30 +339,41 @@ class AddonService:
                     err=exc,
                 )
                 continue
-            best = next(
-                (
-                    s
-                    for s in streams
-                    if s.size_bytes is None or s.size_bytes <= _MAX_STREAM_SIZE_BYTES
-                ),
-                None,
-            )
-            if best is None:
+            for candidate in streams:
+                label = f"{candidate.title} {candidate.quality or ''}"
+                if stream_resolution(label) not in (1080, 720):
+                    continue
+                if titles and not matches_movie_release(label, titles, year):
+                    continue
+                if (
+                    candidate.size_bytes is not None
+                    and candidate.size_bytes > _MAX_STREAM_SIZE_BYTES
+                ):
+                    continue
+                collected.append((result, candidate))
+
+        collected.sort(key=_candidate_sort_key)
+        output: list[tuple[str, SearchResult, StreamCandidate]] = []
+        seen_sources: set[tuple[object, ...]] = set()
+        for result, candidate in collected:
+            source_key = _candidate_source_key(candidate)
+            if source_key in seen_sources:
                 continue
-            token = str(len(candidates))
-            self._candidates[token] = (result, best)
-            candidates.append((token, result, best))
-        return candidates
+            seen_sources.add(source_key)
+            token = str(len(output))
+            self._candidates[token] = (result, candidate)
+            output.append((token, result, candidate))
+        return output
 
     async def pick_candidate(self, token: str, requested_by: int) -> tuple[str, int]:
-        """Enfileira o candidato de `token` (de `resolve_top_candidates`) para reprodução.
+        """Enfileira o candidato de `token` (de `resolve_candidates`) para reprodução.
 
         Retorna `(addon_name, posição na fila)`. Levanta `InvalidSearchIndexError`
         se `token` não existir (ex.: uma busca mais nova já invalidou os tokens
         anteriores) — mesma exceção de `pick()`, já tratada em `bot/handlers/addons.py`.
 
         Diferente de `pick()`, não tenta um próximo candidato em caso de
-        `TorrentTimeoutError`/`TorrentResolutionError`: `resolve_top_candidates`
+        `TorrentTimeoutError`/`TorrentResolutionError`: `resolve_candidates`
         já escolhe um único candidato por addon para este fluxo (clique de
         botão), então não há "próximo" para tentar — a exceção propaga para
         `bot/handlers/addons.py`, que já sabe converter em alerta pedindo
@@ -383,3 +385,28 @@ class AddonService:
         result, candidate = entry
         position = await self._play_candidate(result, candidate, requested_by)
         return result.addon_name, position
+
+
+def _candidate_sort_key(
+    item: tuple[SearchResult, StreamCandidate],
+) -> tuple[int, bool, int, bool, bool, int]:
+    _, candidate = item
+    label = f"{candidate.title} {candidate.quality or ''}"
+    return (
+        -(stream_resolution(label) or 0),
+        candidate.seeds is None,
+        -(candidate.seeds or 0),
+        detect_language_flag(label) is None,
+        candidate.size_bytes is None,
+        candidate.size_bytes or 0,
+    )
+
+
+def _candidate_source_key(candidate: StreamCandidate) -> tuple[object, ...]:
+    if candidate.url:
+        return ("url", candidate.url, candidate.file_index)
+    if candidate.info_hash:
+        return ("info_hash", candidate.info_hash.lower(), candidate.file_index)
+    if candidate.magnet:
+        return ("magnet", candidate.magnet, candidate.file_index)
+    return ("candidate", candidate)

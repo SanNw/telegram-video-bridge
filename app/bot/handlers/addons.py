@@ -35,7 +35,7 @@ verificado dentro de `AddonService.find`) e acha metadados, uma Rich Message
 (`send_rich_message`, pôster/sinopse/nota) é enviada ANTES da lista, como
 destaque visual. Só quando `register_search` roda no client de bot
 (`buttons_enabled=True`) ela carrega `reply_markup` com um botão por addon
-resolvido (via `resolve_top_candidates`/`format_stream_buttons`) — clicar
+resolvido (via `resolve_candidates`/`format_stream_buttons`) — clicar
 enfileira direto, sem precisar de `/pick`. O Telegram descarta
 silenciosamente `reply_markup` em mensagens enviadas por uma conta de usuário
 (`SESSION_STRING`), então no client de sessão a resposta sai sem botão.
@@ -172,7 +172,7 @@ def register_search(
             metadata = service.last_metadata()
             reply_markup = None
             if buttons_enabled:
-                candidates = await service.resolve_top_candidates()
+                candidates = await service.resolve_candidates()
                 reply_markup = format_stream_buttons(candidates) if candidates else None
             if (
                 results
@@ -235,7 +235,7 @@ def register_search(
         )
         try:
             movie, metadata, _ = await service.select_catalog_movie(index)
-            candidates = await service.resolve_top_candidates()
+            candidates = await service.resolve_candidates()
         except (InvalidSearchIndexError, NoStreamsAvailableError) as exc:
             if chat_id is not None:
                 await client.send_message(chat_id, str(exc))
