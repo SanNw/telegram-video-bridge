@@ -64,9 +64,7 @@ async def test_edit_ephemeral_message_serializes_identity() -> None:
 async def test_error_never_exposes_token() -> None:
     http = httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda _request: httpx.Response(
-                400, json={"ok": False, "description": "bad payload"}
-            )
+            lambda _request: httpx.Response(400, json={"ok": False, "description": "bad payload"})
         )
     )
     client = BotAPIClient("123:secret", http=http)

@@ -22,9 +22,7 @@ class BotAPIClient:
             response = await self._http.post(f"{self._base_url}/{method}", json=payload)
             data: Any = response.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise BotAPIError(
-                f"Telegram Bot API request failed: {type(exc).__name__}"
-            ) from exc
+            raise BotAPIError(f"Telegram Bot API request failed: {type(exc).__name__}") from exc
         if not isinstance(data, dict) or not response.is_success or not data.get("ok"):
             description = data.get("description") if isinstance(data, dict) else None
             raise BotAPIError(str(description or "Telegram Bot API rejected the request"))
