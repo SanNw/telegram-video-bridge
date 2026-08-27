@@ -12,6 +12,7 @@ from app.player.models import PlaybackState, QueueItem
 from app.services.models import ServiceStatus
 from app.services.tmdb_service import TMDBMetadata, TMDBMovie
 from app.utils.language_detection import detect_language_flag
+from app.utils.title_matching import stream_resolution
 
 
 def format_status(status: ServiceStatus) -> str:
@@ -238,16 +239,11 @@ def format_stream_buttons(
 
 def _format_stream_button_label(addon_name: str, candidate: StreamCandidate) -> str:
     flag = detect_language_flag(f"{candidate.title} {candidate.quality or ''}")
-    quality = f" ({candidate.quality})" if candidate.quality else ""
-    label = f"▶️ {f'{flag} ' if flag else ''}{addon_name}{quality}"
-    details: list[str] = []
-    if candidate.size_bytes:
-        details.append(f"{candidate.size_bytes / 1024**3:.1f} GB")
+    resolution = stream_resolution(f"{candidate.title} {candidate.quality or ''}")
+    label = f"▶️ {f'{flag} ' if flag else ''}{f'{resolution}p' if resolution else addon_name}"
     if candidate.seeds is not None:
-        details.append(f"{candidate.seeds} seeders")
-    if details:
-        label += " · " + " · ".join(details)
-    return label[:64]
+        label += f" · {candidate.seeds} seeds"
+    return label
 
 
 def _button(text: str, callback_data: str, style: str = "primary") -> dict[str, object]:
@@ -480,6 +476,10 @@ def format_candidate_page(
         },
     ]
     for token, result, candidate in visible:
+        details = [result.addon_name]
+        if candidate.size_bytes:
+            details.append(f"{candidate.size_bytes / 1024**3:.1f} GB")
+        blocks.append({"type": "paragraph", "text": " · ".join(details)})
         blocks.append(
             _button_row(
                 _button(

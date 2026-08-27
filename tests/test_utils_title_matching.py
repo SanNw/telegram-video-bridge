@@ -55,6 +55,16 @@ def test_matches_movie_release_accepts_release_tags_and_accents() -> None:
     )
 
 
+def test_matches_movie_release_accepts_title_line_inside_torrentio_metadata() -> None:
+    assert matches_movie_release(
+        "Imdb top 263 movies hindi english gdrive\n"
+        "The.Matrix.1999.1080p.BrRip.x264.YIFY.mp4\n"
+        "👤 2081 💾 1.86 GB ⚙️ YTS",
+        ["The Matrix"],
+        1999,
+    )
+
+
 def test_matches_movie_release_rejects_wrong_sequel() -> None:
     assert not matches_movie_release("The Matrix Reloaded 1999 1080p", ["The Matrix"], 1999)
 

@@ -54,16 +54,23 @@ def stream_resolution(text: str) -> int | None:
 
 
 def matches_movie_release(candidate: str, titles: Sequence[str | None], year: int | None) -> bool:
-    normalized = _normalized_release(candidate)
-    tokens = normalized.split()
-    candidate_years = {int(value) for value in _YEAR_RE.findall(normalized)}
-    if year is not None and candidate_years != {year}:
-        return False
-    candidate_title = " ".join(
-        token
-        for token in tokens
-        if not _YEAR_RE.fullmatch(token) and stream_resolution(token) is None
-    )
-    return any(
-        fuzz.ratio(candidate_title, _normalized_release(title)) >= 90 for title in titles if title
-    )
+    references = [_normalized_release(title).split() for title in titles if title]
+    for line in candidate.splitlines():
+        normalized = _normalized_release(line)
+        tokens = normalized.split()
+        candidate_years = {int(value) for value in _YEAR_RE.findall(normalized)}
+        if year is not None:
+            if candidate_years != {year}:
+                continue
+            title_tokens = tokens[: tokens.index(str(year))]
+            if any(title_tokens[-len(reference) :] == reference for reference in references):
+                return True
+            continue
+        candidate_title = " ".join(
+            token
+            for token in tokens
+            if not _YEAR_RE.fullmatch(token) and stream_resolution(token) is None
+        )
+        if any(fuzz.ratio(candidate_title, " ".join(reference)) >= 90 for reference in references):
+            return True
+    return False

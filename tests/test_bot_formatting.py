@@ -347,8 +347,28 @@ def test_format_stream_buttons_multiple_candidates_with_quality() -> None:
     markup = format_stream_buttons(candidates)
     assert len(markup.inline_keyboard) == 2
     assert markup.inline_keyboard[0][0].text == "▶️ archive_org"
-    assert markup.inline_keyboard[1][0].text == "▶️ archive_org (1080p)"
+    assert markup.inline_keyboard[1][0].text == "▶️ 1080p"
     assert markup.inline_keyboard[1][0].callback_data == "play:1"
+
+
+def test_format_stream_button_keeps_torrentio_quality_on_one_short_line() -> None:
+    candidates = [
+        (
+            "0",
+            _search_result(),
+            StreamCandidate(
+                title="The Matrix 1999 Dublado",
+                quality="Torrentio\n1080p",
+                seeds=2081,
+                size_bytes=2 * 1024**3,
+            ),
+        )
+    ]
+
+    button = format_stream_buttons(candidates).inline_keyboard[0][0]
+
+    assert button.text == "▶️ 🇧🇷 1080p · 2081 seeds"
+    assert "\n" not in button.text
 
 
 def test_format_stream_buttons_includes_language_flag_from_title() -> None:
@@ -372,7 +392,7 @@ def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
         ),
     ]
     markup = format_stream_buttons(candidates)
-    assert markup.inline_keyboard[0][0].text == "▶️ 🇺🇸 archive_org (1080p Legendado)"
+    assert markup.inline_keyboard[0][0].text == "▶️ 🇺🇸 1080p"
 
 
 def test_main_menu_has_expected_actions() -> None:
@@ -535,7 +555,8 @@ def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
     text = json.dumps(message, ensure_ascii=False)
 
     assert "1080p" in text
-    assert "200 seeders" in text
+    assert "200 seeds" in text
+    assert "stremio · 2.0 GB" in text
     assert rich_callback_actions(message) == {
         "source:0",
         "source:1",
