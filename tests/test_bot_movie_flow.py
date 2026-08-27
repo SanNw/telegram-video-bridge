@@ -17,6 +17,7 @@ from tests.test_bot_handlers import (
     FakeCallbackQuery,
     FakeClient,
     FakeMessage,
+    _FakeService,
     dispatch,
     dispatch_callback,
 )
@@ -199,6 +200,30 @@ async def test_source_callback_edits_progress_then_success(make_settings: Any) -
     assert len(bot_api.edited) == 2
     assert "Preparando" in json.dumps(bot_api.edited[0]["rich_message"], ensure_ascii=False)
     assert "fila" in json.dumps(bot_api.edited[1]["rich_message"], ensure_ascii=False)
+
+
+async def test_source_success_replaces_progress_with_playback_panel(
+    make_settings: Any,
+) -> None:
+    client = FakeClient()
+    service = _RichAddonService()
+    playback = _FakeService()
+    playback._queue_snapshot.current = SimpleNamespace(
+        source=SimpleNamespace(raw="/media/movie.mkv"), display_title="Movie 0"
+    )
+    bot_api = _FakeBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(
+        client, service, authorized, True, bot_api=bot_api, playback=playback
+    )  # type: ignore[arg-type]
+    await dispatch_callback(client, _callback("movie:0", 111))
+
+    await dispatch_callback(client, _callback("source:0", 111))
+
+    final = json.dumps(bot_api.edited[-1]["rich_message"], ensure_ascii=False)
+    assert "control:pause" in final
+    assert "control:stop" in final
+    assert "subtitle:menu" in final
 
 
 async def test_source_callback_replaces_progress_when_torrent_fails(make_settings: Any) -> None:

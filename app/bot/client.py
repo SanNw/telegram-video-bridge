@@ -33,6 +33,7 @@ from app.config.settings import Settings
 from app.services.addon_service import AddonService
 from app.services.channel_media_service import ChannelMediaService
 from app.services.playback_service import PlaybackService
+from app.services.subtitle_service import SubtitleService
 from app.services.tmdb_service import TMDBService
 from app.telegram.bot_api import BotAPIClient
 
@@ -45,6 +46,7 @@ def build_bot(
     bot_client: Client | None = None,
     channel_media_service: ChannelMediaService | None = None,
     bot_api: BotAPIClient | None = None,
+    subtitle_service: SubtitleService | None = None,
 ) -> Client:
     """Registra todos os handlers de comando e devolve o client de sessão.
 
@@ -86,6 +88,7 @@ def build_bot(
                 owner,
                 bot_api,
                 channel_media_service,
+                subtitle_service=subtitle_service,
             )
 
     search_client = bot_client if bot_client is not None else app
@@ -95,6 +98,7 @@ def build_bot(
         bot_authorized if bot_client is not None else authorized,
         buttons_enabled=bot_client is not None,
         bot_api=bot_api,
+        playback=playback_service,
     )
 
     unauthorized.register(app, authorized, search_commands=bot_client is None)

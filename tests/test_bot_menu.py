@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -121,6 +122,90 @@ async def test_control_buttons_call_existing_playback_methods(make_settings: Any
 
     assert playback.volume_calls == [150]
     assert playback.restart_called is True
+
+
+async def test_local_subtitle_selection_updates_same_message(
+    make_settings: Any, tmp_path: Path
+) -> None:
+    class _Subtitles:
+        def list_local(self) -> list[Any]:
+            return [SimpleNamespace(token="0", name="matrix.srt")]
+
+        def resolve_local(self, token: str) -> Path:
+            assert token == "0"
+            return tmp_path / "matrix.srt"
+
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    playback = _FakeService()
+    playback._queue_snapshot.current = SimpleNamespace(
+        media_id="tt0133093",
+        source=SimpleNamespace(raw="/media/matrix.mkv"),
+        display_title="The Matrix",
+        subtitle_path=None,
+        subtitles_enabled=False,
+        subtitle_delay_ms=0,
+    )
+    playback.set_subtitle_path = AsyncMock()  # type: ignore[attr-defined]
+    bot_api = _FakeBotAPI()
+    menu.register(
+        client,
+        playback,
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        bot_api,
+        subtitle_service=_Subtitles(),  # type: ignore[arg-type]
+    )
+
+    await dispatch_callback(client, _callback("subtitle:local:0", 111))
+    await dispatch_callback(client, _callback("subtitle:local-pick:0", 111))
+
+    playback.set_subtitle_path.assert_awaited_once_with(  # type: ignore[attr-defined]
+        str(tmp_path / "matrix.srt")
+    )
+    assert all(item["replace_callback_query_message"] is True for item in bot_api.sent)
+
+
+async def test_online_subtitle_result_expires_when_movie_changes(
+    make_settings: Any,
+) -> None:
+    option = SimpleNamespace(file_id=7, release="Matrix", language="pt-BR", downloads=10)
+    subtitles = SimpleNamespace(
+        search=AsyncMock(return_value=[option]),
+        download=AsyncMock(return_value=Path("matrix.srt")),
+    )
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    playback = _FakeService()
+    current = SimpleNamespace(
+        media_id="tt0133093",
+        source=SimpleNamespace(raw="/media/matrix.mkv"),
+        display_title="The Matrix",
+        subtitle_path=None,
+        subtitles_enabled=False,
+        subtitle_delay_ms=0,
+    )
+    playback._queue_snapshot.current = current
+    playback.set_subtitle_path = AsyncMock()  # type: ignore[attr-defined]
+    menu.register(
+        client,
+        playback,
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        _FakeBotAPI(),
+        subtitle_service=subtitles,  # type: ignore[arg-type]
+    )
+    await dispatch_callback(client, _callback("subtitle:search:0", 111))
+    current.media_id = "tt0234215"
+    callback = _callback("subtitle:pick:0", 111)
+
+    await dispatch_callback(client, callback)
+
+    assert callback.answers[-1][1] is True
+    assert "expirou" in callback.answers[-1][0].lower()
+    subtitles.download.assert_not_awaited()
 
 
 async def test_admin_menu_rejects_non_owner(make_settings: Any) -> None:

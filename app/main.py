@@ -19,7 +19,9 @@ from app.bot.client import build_bot
 from app.config.settings import get_settings
 from app.services.addon_service import AddonService
 from app.services.channel_media_service import ChannelMediaService
+from app.services.opensubtitles_client import OpenSubtitlesClient
 from app.services.playback_service import PlaybackService
+from app.services.subtitle_service import SubtitleService
 from app.services.tmdb_service import TMDBService
 from app.services.torrent_service import TorrentService
 from app.telegram.bot_api import BotAPIClient
@@ -51,6 +53,20 @@ async def _run() -> None:
     channel_media_service = ChannelMediaService(
         settings, service.client, service, addon_service, tmdb_service
     )
+    opensubtitles_client = None
+    if settings.opensubtitles_enabled:
+        assert settings.opensubtitles_api_key is not None
+        assert settings.opensubtitles_username is not None
+        assert settings.opensubtitles_password is not None
+        opensubtitles_client = OpenSubtitlesClient(
+            settings.opensubtitles_api_key.get_secret_value(),
+            settings.opensubtitles_username,
+            settings.opensubtitles_password.get_secret_value(),
+            settings.opensubtitles_user_agent,
+        )
+    subtitle_service = SubtitleService(
+        settings.qbittorrent_local_path / ".subtitles", opensubtitles_client
+    )
     service.set_source_released_callback(channel_media_service.release)
 
     bot_client: Client | None = None
@@ -73,6 +89,7 @@ async def _run() -> None:
         bot_client,
         channel_media_service,
         bot_api,
+        subtitle_service,
     )
 
     await service.start()
@@ -98,6 +115,8 @@ async def _run() -> None:
         if bot_api is not None:
             await bot_api.close()
         await addon_service.close()
+        if opensubtitles_client is not None:
+            await opensubtitles_client.close()
         await channel_media_service.close()
         await tmdb_service.close()
         await torrent_service.close()

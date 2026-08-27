@@ -66,6 +66,7 @@ from app.bot.formatting import (
     format_movie_card,
     format_movie_details,
     format_movie_results,
+    format_playback_panel,
     format_rich_fallback,
     format_search_results,
     format_stream_buttons,
@@ -79,6 +80,7 @@ from app.services.exceptions import (
     TorrentResolutionError,
     TorrentTimeoutError,
 )
+from app.services.playback_service import PlaybackService
 from app.telegram.bot_api import BotAPIClient, BotAPIError
 from app.utils.logging import get_logger
 from app.utils.sanitize import InvalidSourceError
@@ -180,6 +182,7 @@ def register_search(
     authorized: filters.Filter,
     buttons_enabled: bool,
     bot_api: BotAPIClient | None = None,
+    playback: PlaybackService | None = None,
 ) -> None:
     """Registra `/find`, `/pick` e o callback `play:` em `app`.
 
@@ -355,6 +358,14 @@ def register_search(
                     addon_name, position = await service.play_resolved_candidate(
                         result, candidate, user.id
                     )
+                    if playback is not None:
+                        await _render(
+                            callback_query,
+                            state,
+                            format_playback_panel(playback.status(), playback.queue_snapshot()),
+                        )
+                        await callback_query.answer()
+                        return
                     await _render(
                         callback_query,
                         state,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from pyrogram import Client, filters
@@ -9,29 +11,40 @@ from pyrogram.types import CallbackQuery, ForceReply
 
 from app.bot.formatting import (
     format_addons_screen,
-    format_controls_screen,
     format_help_screen,
     format_help_topic,
     format_main_menu,
     format_movie_results,
     format_now_playing_screen,
+    format_playback_panel,
     format_queue_screen,
     format_rich_fallback,
+    format_subtitle_options,
+    format_subtitle_panel,
+    format_volume_panel,
 )
 from app.player.models import LoopMode
 from app.services.addon_service import AddonService
 from app.services.channel_media_service import ChannelMediaService
 from app.services.exceptions import InvalidVolumeError, NothingPlayingError
 from app.services.playback_service import PlaybackService
+from app.services.subtitle_service import SubtitleService
 from app.telegram.bot_api import BotAPIClient, BotAPIError
 
 
 def _is_menu_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
     data = getattr(callback_query, "data", None)
-    return isinstance(data, str) and data.startswith(("menu:", "control:", "help:"))
+    return isinstance(data, str) and data.startswith(("menu:", "control:", "help:", "subtitle:"))
 
 
 menu_callback_filter = filters.create(_is_menu_callback, "MenuCallbackFilter")
+
+
+@dataclass(slots=True)
+class _SubtitleState:
+    media_id: str
+    local: dict[str, Path] = field(default_factory=dict)
+    online: list[Any] = field(default_factory=list)
 
 
 def register(
@@ -42,8 +55,10 @@ def register(
     owner: filters.Filter,
     bot_api: BotAPIClient,
     channel_media: ChannelMediaService | None = None,
+    subtitle_service: SubtitleService | None = None,
 ) -> None:
     awaiting: dict[tuple[int, int], str] = {}
+    subtitle_states: dict[tuple[int, int], _SubtitleState] = {}
 
     def _is_awaited_text(_flt: Any, _client: Any, message: Any) -> bool:
         chat = getattr(message, "chat", None)
@@ -83,9 +98,86 @@ def register(
             return
 
         try:
-            screen = await _screen(
-                data, playback, addons, getattr(user, "first_name", None) or "administrador"
-            )
+            if data.startswith("subtitle:"):
+                current = playback.queue_snapshot().current
+                if current is None or current.media_id is None:
+                    raise NothingPlayingError(
+                        "O filme atual não possui identificação para legendas."
+                    )
+                key = (message.chat.id, user.id)
+                state = subtitle_states.get(key)
+                if data == "subtitle:menu":
+                    state = _SubtitleState(current.media_id)
+                    subtitle_states[key] = state
+                    screen = format_subtitle_panel(current)
+                elif subtitle_service is None:
+                    screen = format_subtitle_panel(current)
+                elif data.startswith("subtitle:local:"):
+                    entries = subtitle_service.list_local()
+                    state = _SubtitleState(
+                        current.media_id,
+                        local={
+                            entry.token: subtitle_service.resolve_local(entry.token)
+                            for entry in entries
+                        },
+                    )
+                    subtitle_states[key] = state
+                    screen = format_subtitle_options(
+                        "Legendas locais",
+                        [entry.name for entry in entries],
+                        int(data.rsplit(":", 1)[-1]),
+                        "subtitle:local-pick",
+                    )
+                elif data.startswith("subtitle:local-pick:"):
+                    token = data.rsplit(":", 1)[-1]
+                    if (
+                        state is None
+                        or state.media_id != current.media_id
+                        or token not in state.local
+                    ):
+                        await callback_query.answer("Essa opção expirou.", show_alert=True)
+                        return
+                    await playback.set_subtitle_path(str(state.local[token]))
+                    screen = format_subtitle_panel(playback.queue_snapshot().current or current)
+                elif data.startswith("subtitle:search:"):
+                    options = await subtitle_service.search(current.media_id)
+                    state = _SubtitleState(current.media_id, online=list(options))
+                    subtitle_states[key] = state
+                    screen = format_subtitle_options(
+                        "OpenSubtitles",
+                        [f"{item.language} · {item.release}" for item in options],
+                        int(data.rsplit(":", 1)[-1]),
+                        "subtitle:pick",
+                    )
+                elif data.startswith("subtitle:pick:"):
+                    token = data.rsplit(":", 1)[-1]
+                    if (
+                        state is None
+                        or state.media_id != current.media_id
+                        or not token.isdigit()
+                        or int(token) >= len(state.online)
+                    ):
+                        await callback_query.answer("Essa opção expirou.", show_alert=True)
+                        return
+                    path = await subtitle_service.download(
+                        state.online[int(token)], current.media_id
+                    )
+                    await playback.set_subtitle_path(str(path))
+                    screen = format_subtitle_panel(playback.queue_snapshot().current or current)
+                elif data == "subtitle:toggle":
+                    await playback.set_subtitles_enabled(not current.subtitles_enabled)
+                    screen = format_subtitle_panel(playback.queue_snapshot().current or current)
+                elif data == "subtitle:delay":
+                    screen = _subtitle_delay_screen()
+                elif data.startswith("subtitle:delay:"):
+                    await playback.set_subtitle_delay(int(data.rsplit(":", 1)[-1]))
+                    screen = format_subtitle_panel(playback.queue_snapshot().current or current)
+                else:
+                    screen = format_subtitle_panel(current)
+            else:
+                screen = await _screen(
+                    data, playback, addons, getattr(user, "first_name", None) or "administrador"
+                )
             if message.chat.id > 0 and isinstance(getattr(message, "id", None), int):
                 await bot_api.edit_rich_message(message.chat.id, message.id, screen)
             else:
@@ -156,6 +248,10 @@ async def _screen(
         return format_now_playing_screen(playback.queue_snapshot())
     if data == "menu:queue":
         return format_queue_screen(playback.queue_snapshot())
+    if data == "menu:controls":
+        return format_playback_panel(playback.status(), playback.queue_snapshot())
+    if data == "menu:volume":
+        return format_volume_panel(playback.status())
     if data == "menu:addons":
         return format_addons_screen(addons.list_addons())
     if data == "menu:help":
@@ -180,4 +276,30 @@ async def _screen(
             await playback.set_loop_mode(LoopMode(action[2]))
         elif action[1] == "volume":
             await playback.set_volume(int(action[2]))
-    return format_controls_screen(playback.status())
+    return format_playback_panel(playback.status(), playback.queue_snapshot())
+
+
+def _subtitle_delay_screen() -> dict[str, object]:
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Sincronia", "size": 2},
+            {"type": "paragraph", "text": "Negativo adianta; positivo atrasa."},
+            {
+                "type": "buttons",
+                "align": "left",
+                "buttons": [
+                    {"text": "-1s", "style": "primary", "callback_data": "subtitle:delay:-1000"},
+                    {"text": "-0.5s", "style": "primary", "callback_data": "subtitle:delay:-500"},
+                    {"text": "+0.5s", "style": "primary", "callback_data": "subtitle:delay:500"},
+                    {"text": "+1s", "style": "primary", "callback_data": "subtitle:delay:1000"},
+                ],
+            },
+            {
+                "type": "buttons",
+                "align": "left",
+                "buttons": [
+                    {"text": "Voltar", "style": "primary", "callback_data": "subtitle:menu"}
+                ],
+            },
+        ]
+    }
