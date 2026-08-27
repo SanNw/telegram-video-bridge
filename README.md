@@ -76,6 +76,10 @@ STREAM_CHAT_ID=
 OWNER_USER_ID=
 BOT_TOKEN=
 TMDB_API_KEY=
+OPENSUBTITLES_API_KEY=
+OPENSUBTITLES_USERNAME=
+OPENSUBTITLES_PASSWORD=
+OPENSUBTITLES_USER_AGENT=Telerion v1
 
 MEDIA_HOST_PATH=./media/torrents
 QBITTORRENT_HOST=host.docker.internal
@@ -139,6 +143,12 @@ docker build -f docker/Dockerfile -t telerion:local .
 - [Histórico de versões](CHANGELOG.md)
 
 ---
+
+## Painel de reproducao e legendas
+
+Ao escolher uma fonte, a propria Rich Message vira o painel de reproducao. Pausa, retomada, stop, skip, reinicio, volume, fila e legendas atualizam essa mesma mensagem, sem criar respostas sucessivas no chat.
+
+O submenu permite ligar ou desligar a faixa, ajustar a sincronia e escolher arquivos `.srt` diretamente em `QBITTORRENT_LOCAL_PATH/.subtitles`. Com `OPENSUBTITLES_API_KEY`, `OPENSUBTITLES_USERNAME` e `OPENSUBTITLES_PASSWORD`, tambem busca alternativas PT-BR/PT na API oficial. Downloads sao limitados a 2 MB. Os comandos `/legenda` e `/subdelay` continuam disponiveis como fallback.
 
 <div align="center">
   <strong>Telerion</strong><br>

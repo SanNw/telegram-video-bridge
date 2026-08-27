@@ -129,6 +129,22 @@ def test_opensubtitles_is_enabled_with_all_credentials(
     assert settings.opensubtitles_enabled is True
 
 
+def test_masked_dict_never_exposes_opensubtitles_secrets(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(
+        opensubtitles_api_key="api-secret",
+        opensubtitles_password="password-secret",
+    )
+
+    masked = settings.masked_dict()
+
+    assert "api-secret" not in str(masked)
+    assert "password-secret" not in str(masked)
+    assert masked["opensubtitles_api_key"] == "***MASKED***"
+    assert masked["opensubtitles_password"] == "***MASKED***"
+
+
 def test_bot_token_defaults_to_none(make_settings: Callable[..., Settings]) -> None:
     settings = make_settings()
     assert settings.bot_token is None
