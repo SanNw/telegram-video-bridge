@@ -9,6 +9,7 @@ cada camada individual (já cobertos em outros arquivos).
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -58,6 +59,11 @@ class _FakeQueueManager:
     async def set_subtitle_delay(self, delay_ms: int) -> None:
         if self.current is not None:
             self.current.subtitle_delay_ms = delay_ms
+
+    async def set_subtitle_path(self, path: str | None) -> None:
+        if self.current is not None:
+            self.current.subtitle_path = path
+            self.current.subtitles_enabled = path is not None
 
     async def set_subtitles_enabled(self, enabled: bool) -> None:
         if self.current is not None:
@@ -234,6 +240,30 @@ async def test_play_persists_movie_context(
     current = queue.snapshot().current
     assert current is not None
     assert (current.media_id, current.display_title) == ("tt0133093", "The Matrix")
+
+
+async def test_set_subtitle_path_restarts_at_elapsed_position(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    video = tmp_path / "media" / "movie.mp4"
+    subtitle = tmp_path / "media" / ".subtitles" / "matrix-alt.srt"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    subtitle.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"x")
+    subtitle.write_text("subtitle", encoding="utf-8")
+    await service.play("movie.mp4", requested_by=1)
+    queue, streamer, call = _fakes(service)
+    call.rtmp_active = True
+    service._current_started_at = datetime.now(UTC) - timedelta(seconds=42)  # noqa: SLF001
+
+    await service.set_subtitle_path(str(subtitle))
+
+    current = queue.snapshot().current
+    assert current is not None
+    assert current.subtitle_path == str(subtitle)
+    assert streamer.change_calls[-1][2] == str(subtitle)
+    assert 41 <= streamer.change_calls[-1][4] <= 43
 
 
 async def test_play_only_enqueues_when_already_active(

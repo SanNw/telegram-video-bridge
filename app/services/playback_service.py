@@ -276,6 +276,31 @@ class PlaybackService:
         )
         self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
 
+    async def set_subtitle_path(self, path: str | None) -> None:
+        """Troca a legenda e retoma aproximadamente da posição atual."""
+        if path is not None and not Path(path).is_file():
+            raise FileNotFoundError(path)
+        async with self._lock:
+            current = self._queue.snapshot().current
+            if not self._is_active or current is None:
+                raise NothingPlayingError("Nada está tocando no momento.")
+            elapsed = self._elapsed_seconds()
+            await self._queue.set_subtitle_path(path)
+            try:
+                output_url = await self._call_manager.prepare_rtmp()
+            except Exception as exc:
+                _logger.warning("RTMP indisponível ao trocar legenda: {err}", err=exc)
+                output_url = None
+            await self._streamer.change_source(
+                current.source,
+                output_url,
+                path,
+                current.subtitle_delay_ms,
+                elapsed,
+                self._volume,
+            )
+            self._current_started_at = datetime.now(UTC) - timedelta(seconds=elapsed)
+
     async def set_subtitles_enabled(self, enabled: bool) -> None:
         current = self._queue.snapshot().current
         if not self._is_active or current is None or current.subtitle_path is None:

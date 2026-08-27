@@ -93,6 +93,21 @@ async def test_clear_empties_pending_but_keeps_current(
     assert snapshot.current.source.raw.endswith("a.mp4")
 
 
+async def test_set_subtitle_path_updates_current_item(
+    make_settings: Callable[..., Settings],
+) -> None:
+    manager = QueueManager(make_settings())
+    await manager.add(_make_item("a.mp4"))
+    await manager.advance()
+
+    await manager.set_subtitle_path("/media/.subtitles/matrix.srt")
+
+    current = manager.snapshot().current
+    assert current is not None
+    assert current.subtitle_path == "/media/.subtitles/matrix.srt"
+    assert current.subtitles_enabled is True
+
+
 async def test_loop_item_replays_same_item_on_advance(
     make_settings: Callable[..., Settings],
 ) -> None:

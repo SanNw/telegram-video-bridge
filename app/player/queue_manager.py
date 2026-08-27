@@ -117,6 +117,13 @@ class QueueManager:
                 self._current.subtitle_delay_ms = delay_ms
                 await self._save()
 
+    async def set_subtitle_path(self, path: str | None) -> None:
+        async with self._lock:
+            if self._current is not None:
+                self._current.subtitle_path = path
+                self._current.subtitles_enabled = path is not None
+                await self._save()
+
     async def set_subtitles_enabled(self, enabled: bool) -> None:
         async with self._lock:
             if self._current is not None:
