@@ -369,6 +369,38 @@ def register_search(
                     )
                 await callback_query.answer()
                 return
+            except (TorrentTimeoutError, TorrentResolutionError) as exc:
+                _logger.warning("Falha ao preparar torrent selecionado: {err}", err=exc)
+                await _render(
+                    callback_query,
+                    state,
+                    {
+                        "blocks": [
+                            {
+                                "type": "paragraph",
+                                "text": "Não foi possível iniciar esta fonte. Tente novamente.",
+                            },
+                            {
+                                "type": "buttons",
+                                "align": "left",
+                                "buttons": [
+                                    {
+                                        "text": "Tentar novamente",
+                                        "style": "primary",
+                                        "callback_data": data,
+                                    },
+                                    {
+                                        "text": "Voltar",
+                                        "style": "primary",
+                                        "callback_data": "flow:back",
+                                    },
+                                ],
+                            },
+                        ]
+                    },
+                )
+                await callback_query.answer()
+                return
             except (BotAPIError, InvalidSearchIndexError, NoStreamsAvailableError) as exc:
                 await callback_query.answer(str(exc), show_alert=True)
                 return

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import UTC, datetime, timedelta
 
 from app.addon_system.base import SearchResult, StreamCandidate
@@ -331,7 +332,7 @@ def test_format_stream_buttons_single_candidate_without_quality() -> None:
     markup = format_stream_buttons(candidates)
     assert len(markup.inline_keyboard) == 1
     button = markup.inline_keyboard[0][0]
-    assert button.text == "▶️ archive_org"
+    assert button.text == "archive_org"
     assert button.callback_data == "play:0"
 
 
@@ -346,8 +347,8 @@ def test_format_stream_buttons_multiple_candidates_with_quality() -> None:
     ]
     markup = format_stream_buttons(candidates)
     assert len(markup.inline_keyboard) == 2
-    assert markup.inline_keyboard[0][0].text == "▶️ archive_org"
-    assert markup.inline_keyboard[1][0].text == "▶️ 1080p"
+    assert markup.inline_keyboard[0][0].text == "archive_org"
+    assert markup.inline_keyboard[1][0].text == "1080p"
     assert markup.inline_keyboard[1][0].callback_data == "play:1"
 
 
@@ -367,11 +368,11 @@ def test_format_stream_button_keeps_torrentio_quality_on_one_short_line() -> Non
 
     button = format_stream_buttons(candidates).inline_keyboard[0][0]
 
-    assert button.text == "▶️ 🇧🇷 1080p · 2081 seeds"
+    assert button.text == "1080p · 2081"
     assert "\n" not in button.text
 
 
-def test_format_stream_buttons_includes_language_flag_from_title() -> None:
+def test_format_stream_buttons_omits_language_emoji_from_title() -> None:
     candidates = [
         (
             "0",
@@ -380,10 +381,10 @@ def test_format_stream_buttons_includes_language_flag_from_title() -> None:
         ),
     ]
     markup = format_stream_buttons(candidates)
-    assert markup.inline_keyboard[0][0].text == "▶️ 🇧🇷 archive_org"
+    assert markup.inline_keyboard[0][0].text == "archive_org"
 
 
-def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
+def test_format_stream_buttons_omits_language_emoji_from_quality() -> None:
     candidates = [
         (
             "0",
@@ -392,7 +393,7 @@ def test_format_stream_buttons_includes_language_flag_from_quality() -> None:
         ),
     ]
     markup = format_stream_buttons(candidates)
-    assert markup.inline_keyboard[0][0].text == "▶️ 🇺🇸 1080p"
+    assert markup.inline_keyboard[0][0].text == "1080p"
 
 
 def test_main_menu_has_expected_actions() -> None:
@@ -408,6 +409,47 @@ def test_main_menu_has_expected_actions() -> None:
     }
     assert "Rafael" in json.dumps(message, ensure_ascii=False)
     assert "Cinema" in json.dumps(message, ensure_ascii=False)
+
+
+def test_rich_button_labels_are_mobile_safe() -> None:
+    movie = TMDBMovie(
+        1, "The Matrix Reloaded With A Very Long Title", None, None, None, 7.0, "2003-05-15"
+    )
+    metadata = TMDBMetadata(
+        title=movie.title,
+        original_title=movie.title,
+        overview="Sinopse",
+        poster_url=None,
+        vote_average=7.0,
+        genres=["Ação"],
+        release_date="2003-05-15",
+        cast=[],
+        backdrop_urls=[],
+    )
+    candidate = (
+        "0",
+        SearchResult("tt0234215", movie.title, 2003, "stremio"),
+        StreamCandidate(title=f"{movie.title} 1080p", quality="Torrentio\n1080p", seeds=2081),
+    )
+    messages = [
+        format_main_menu("San", "Cinema"),
+        formatting.format_help_screen(),
+        format_movie_results([movie], 0),
+        format_movie_details(movie, metadata),
+        format_candidate_page([candidate], 0),
+    ]
+
+    labels = [
+        button["text"]
+        for message in messages
+        for block in message["blocks"]
+        if block.get("type") == "buttons"
+        for button in block["buttons"]
+    ]
+
+    assert labels
+    assert all("\n" not in label and len(label) <= 16 for label in labels)
+    assert all(not any(unicodedata.category(char) == "So" for char in label) for label in labels)
 
 
 def test_help_home_groups_commands_into_navigable_topics() -> None:
@@ -484,7 +526,7 @@ def test_movie_details_exposes_source_search_and_back() -> None:
     message = format_movie_details(movie, metadata)
 
     assert rich_callback_actions(message) == {"sources:0", "flow:back", "flow:cancel"}
-    assert "▶ Assistir agora" in json.dumps(message, ensure_ascii=False)
+    assert "Assistir" in json.dumps(message, ensure_ascii=False)
     assert "Ver fontes" not in json.dumps(message, ensure_ascii=False)
     assert "The Matrix" in json.dumps(message, ensure_ascii=False)
 
@@ -555,7 +597,7 @@ def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
     text = json.dumps(message, ensure_ascii=False)
 
     assert "1080p" in text
-    assert "200 seeds" in text
+    assert "1080p · 200" in text
     assert "stremio · 2.0 GB" in text
     assert rich_callback_actions(message) == {
         "source:0",
@@ -569,9 +611,9 @@ def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
         "flow:cancel",
     }
     assert '"type": "buttons"' in text
-    assert "↻ Atualizar opções" in text
-    assert "◀ Voltar ao filme" in text
-    assert "✕ Fechar" in text
+    assert "Atualizar" in text
+    assert "Voltar" in text
+    assert "Fechar" in text
 
 
 def test_controls_screen_exposes_every_playback_action() -> None:

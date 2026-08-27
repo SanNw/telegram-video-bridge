@@ -238,16 +238,15 @@ def format_stream_buttons(
 
 
 def _format_stream_button_label(addon_name: str, candidate: StreamCandidate) -> str:
-    flag = detect_language_flag(f"{candidate.title} {candidate.quality or ''}")
     resolution = stream_resolution(f"{candidate.title} {candidate.quality or ''}")
-    label = f"▶️ {f'{flag} ' if flag else ''}{f'{resolution}p' if resolution else addon_name}"
+    label = f"{resolution}p" if resolution else addon_name
     if candidate.seeds is not None:
-        label += f" · {candidate.seeds} seeds"
+        label += f" · {candidate.seeds}"
     return label
 
 
 def _button(text: str, callback_data: str, style: str = "primary") -> dict[str, object]:
-    return {"text": text, "style": style, "callback_data": callback_data}
+    return {"text": " ".join(text.split()), "style": style, "callback_data": callback_data}
 
 
 def _button_row(*buttons: dict[str, object]) -> dict[str, object]:
@@ -275,16 +274,16 @@ def format_main_menu(first_name: str, channel_title: str | None) -> dict[str, ob
                 ),
             },
             _button_row(
-                _button("🎬 Buscar filme", "menu:find"),
-                _button("▤ Acervo do canal", "menu:channel"),
+                _button("Buscar", "menu:find"),
+                _button("Acervo", "menu:channel"),
             ),
             _button_row(
-                _button("▶ Em reprodução", "menu:now"),
-                _button("≡ Minha fila", "menu:queue"),
+                _button("Tocando", "menu:now"),
+                _button("Fila", "menu:queue"),
             ),
             _button_row(
-                _button("◉ Controles", "menu:controls"),
-                _button("? Ajuda", "menu:help"),
+                _button("Controles", "menu:controls"),
+                _button("Ajuda", "menu:help"),
             ),
         ]
     }
@@ -299,18 +298,18 @@ def format_help_screen() -> dict[str, object]:
                 "text": "Escolha uma área para consultar os recursos disponíveis no Telerion.",
             },
             _button_row(
-                _button("🎬 Filmes", "help:movies"),
-                _button("▶ Reprodução", "help:playback"),
+                _button("Filmes", "help:movies"),
+                _button("Reprodução", "help:playback"),
             ),
             _button_row(
-                _button("≡ Fila", "help:queue"),
-                _button("CC Legendas", "help:subtitles"),
+                _button("Fila", "help:queue"),
+                _button("Legendas", "help:subtitles"),
             ),
             _button_row(
-                _button("◉ Sistema", "help:system"),
-                _button("⚙ Administração", "help:admin"),
+                _button("Sistema", "help:system"),
+                _button("Admin", "help:admin"),
             ),
-            _button_row(_button("‹ Início", "menu:home")),
+            _button_row(_button("Início", "menu:home")),
         ]
     }
 
@@ -356,7 +355,7 @@ def format_help_topic(topic: str) -> dict[str, object]:
             {"type": "heading", "text": title, "size": 2},
             {"type": "paragraph", "text": text},
             _button_row(
-                _button("‹ Ajuda", "menu:help"),
+                _button("Ajuda", "menu:help"),
                 _button("Início", "menu:home"),
             ),
         ]
@@ -401,12 +400,13 @@ def format_movie_results(
     ]
     for index, movie in enumerate(visible, start=start):
         year = movie.release_date[:4] if movie.release_date else "—"
-        blocks.append(_button_row(_button(f"{movie.title} ({year})", f"movie:{index}")))
+        blocks.append({"type": "paragraph", "text": f"{index + 1}. {movie.title} ({year})"})
+        blocks.append(_button_row(_button(f"Escolher {index + 1}", f"movie:{index}")))
     navigation: list[dict[str, object]] = []
     if page > 0:
-        navigation.append(_button("◀ Anterior", f"catalog:{page - 1}"))
+        navigation.append(_button("Anterior", f"catalog:{page - 1}"))
     if start + page_size < len(movies):
-        navigation.append(_button("Próxima ▶", f"catalog:{page + 1}"))
+        navigation.append(_button("Próxima", f"catalog:{page + 1}"))
     if navigation:
         blocks.append(_button_row(*navigation))
     blocks.append(_button_row(_button("Cancelar", "flow:cancel", "danger")))
@@ -451,10 +451,10 @@ def format_movie_details(movie: TMDBMovie, metadata: TMDBMetadata) -> dict[str, 
         )
     blocks.extend(
         [
-            _button_row(_button("▶ Assistir agora", "sources:0", "success")),
+            _button_row(_button("Assistir", "sources:0", "success")),
             _button_row(
-                _button("◀ Voltar", "flow:back"),
-                _button("✕ Fechar", "flow:cancel", "danger"),
+                _button("Voltar", "flow:back"),
+                _button("Fechar", "flow:cancel", "danger"),
             ),
         ]
     )
@@ -490,17 +490,17 @@ def format_candidate_page(
         )
     navigation: list[dict[str, object]] = []
     if page > 0:
-        navigation.append(_button("◀ Anterior", f"sources:{page - 1}"))
+        navigation.append(_button("Anterior", f"sources:{page - 1}"))
     if start + page_size < len(candidates):
-        navigation.append(_button("Próxima ▶", f"sources:{page + 1}"))
+        navigation.append(_button("Próxima", f"sources:{page + 1}"))
     if navigation:
         blocks.append(_button_row(*navigation))
     blocks.extend(
         [
-            _button_row(_button("↻ Atualizar opções", "flow:refresh")),
+            _button_row(_button("Atualizar", "flow:refresh")),
             _button_row(
-                _button("◀ Voltar ao filme", "flow:back"),
-                _button("✕ Fechar", "flow:cancel", "danger"),
+                _button("Voltar", "flow:back"),
+                _button("Fechar", "flow:cancel", "danger"),
             ),
         ]
     )

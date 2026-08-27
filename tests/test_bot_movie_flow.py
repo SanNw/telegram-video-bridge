@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 from app.addon_system.base import SearchResult, StreamCandidate
 from app.bot.auth import build_authorized_filter
 from app.bot.handlers import addons
+from app.services.exceptions import TorrentResolutionError
 from app.services.tmdb_service import TMDBMetadata, TMDBMovie
 from app.telegram.bot_api import BotAPIError
 from tests.test_bot_handlers import (
@@ -198,6 +199,29 @@ async def test_source_callback_edits_progress_then_success(make_settings: Any) -
     assert len(bot_api.edited) == 2
     assert "Preparando" in json.dumps(bot_api.edited[0]["rich_message"], ensure_ascii=False)
     assert "fila" in json.dumps(bot_api.edited[1]["rich_message"], ensure_ascii=False)
+
+
+async def test_source_callback_replaces_progress_when_torrent_fails(make_settings: Any) -> None:
+    class _FailingService(_RichAddonService):
+        async def play_resolved_candidate(
+            self, result: SearchResult, candidate: StreamCandidate, requested_by: int
+        ) -> tuple[str, int]:
+            raise TorrentResolutionError("qBittorrent indisponível")
+
+    client = FakeClient()
+    bot_api = _FakeBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(  # type: ignore[arg-type]
+        client, _FailingService(), authorized, True, bot_api=bot_api
+    )
+    await dispatch_callback(client, _callback("movie:0", 111))
+
+    await dispatch_callback(client, _callback("source:0", 111))
+
+    error = json.dumps(bot_api.edited[-1]["rich_message"], ensure_ascii=False)
+    assert "Não foi possível iniciar" in error
+    assert "source:0" in error
+    assert "flow:back" in error
 
 
 async def test_catalog_sources_refresh_back_and_cancel_update_same_message(
