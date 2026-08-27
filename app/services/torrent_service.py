@@ -84,6 +84,10 @@ class TorrentService:
         await self._wait_for_metadata(handle, deadline)
         video_file = await self._select_video_file(handle, candidate.file_index)
         _logger.info("Arquivo selecionado: {path}", path=video_file.path)
+        try:
+            await self._backend.select_file(handle, video_file.index)
+        except (QBittorrentAuthError, QBittorrentUnavailableError) as exc:
+            raise TorrentResolutionError(f"Falha ao priorizar arquivo: {exc}") from exc
         await self._wait_for_buffer(handle, video_file, deadline)
 
         status = await self._get_status(handle)

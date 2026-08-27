@@ -17,6 +17,7 @@ import app.services.torrent_service as torrent_service_module
 from app.addon_system.base import StreamCandidate
 from app.config.settings import Settings
 from app.services.exceptions import TorrentResolutionError, TorrentTimeoutError
+from app.services.qbittorrent_client import QBittorrentUnavailableError
 from app.services.torrent_backend import TorrentBackend, TorrentFile, TorrentStatus
 from app.services.torrent_service import TorrentService
 from app.utils.sanitize import MediaSource, SourceType
@@ -36,6 +37,8 @@ class _FakeBackend(TorrentBackend):
     def __init__(self) -> None:
         self.added: list[str] = []
         self.removed: list[str] = []
+        self.selected: list[tuple[str, int]] = []
+        self.select_exception: Exception | None = None
         self.closed = False
         self._status_sequence: dict[str, list[TorrentStatus]] = {}
         self._files_sequence: dict[str, list[list[TorrentFile]]] = {}
@@ -70,6 +73,11 @@ class _FakeBackend(TorrentBackend):
 
     async def remove(self, handle: str) -> None:
         self.removed.append(handle)
+
+    async def select_file(self, handle: str, file_index: int) -> None:
+        if self.select_exception is not None:
+            raise self.select_exception
+        self.selected.append((handle, file_index))
 
     async def list_active(self) -> list[TorrentStatus]:
         return []
@@ -131,6 +139,18 @@ async def test_resolve_full_happy_path_returns_local_path(
 
     assert path.replace("\\", "/").endswith("/downloads/Movie.mkv")
     assert backend.added[0].startswith("magnet:?xt=urn:btih:abc123")
+    assert backend.selected == [("abc123", 0)]
+
+
+async def test_resolve_maps_file_priority_failure(
+    service: TorrentService, backend: _FakeBackend
+) -> None:
+    backend.program_status("abc123", [_status(has_metadata=True)])
+    backend.program_files("abc123", [[_file(0, "Movie.mkv", 10 * 1024 * 1024)]])
+    backend.select_exception = QBittorrentUnavailableError("offline")
+
+    with pytest.raises(TorrentResolutionError, match="priorizar"):
+        await service.resolve(_candidate())
 
 
 async def test_resolve_maps_windows_qbittorrent_path_to_container_media(

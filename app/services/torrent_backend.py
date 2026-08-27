@@ -90,6 +90,10 @@ class TorrentBackend(ABC):
         """Arquivos do torrent `handle` (vazio se a metadata ainda não chegou)."""
 
     @abstractmethod
+    async def select_file(self, handle: str, file_index: int) -> None:
+        """Desativa os demais arquivos e prioriza somente `file_index`."""
+
+    @abstractmethod
     async def remove(self, handle: str) -> None:
         """Remove o torrent `handle` do backend (dados baixados inclusos)."""
 

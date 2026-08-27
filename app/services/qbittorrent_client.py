@@ -95,6 +95,21 @@ class QBittorrentClient(TorrentBackend):
             for entry in entries
         ]
 
+    async def select_file(self, handle: str, file_index: int) -> None:
+        files = await self.files(handle)
+        other_ids = "|".join(str(file.index) for file in files if file.index != file_index)
+        if other_ids:
+            await self._request(
+                "POST",
+                "/torrents/filePrio",
+                data={"hash": handle, "id": other_ids, "priority": "0"},
+            )
+        await self._request(
+            "POST",
+            "/torrents/filePrio",
+            data={"hash": handle, "id": str(file_index), "priority": "7"},
+        )
+
     async def remove(self, handle: str) -> None:
         await self._request(
             "POST", "/torrents/delete", data={"hashes": handle, "deleteFiles": "true"}

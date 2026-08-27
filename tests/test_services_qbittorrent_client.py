@@ -245,6 +245,30 @@ async def test_files_returns_empty_on_invalid_json(client: QBittorrentClient) ->
     assert files == []
 
 
+async def test_select_file_disables_pack_and_prioritizes_only_target(
+    client: QBittorrentClient,
+) -> None:
+    client._client.post.return_value = _FakeResponse(status_code=200, text="Ok.")
+    client._client.request.side_effect = [
+        _FakeResponse(
+            [
+                {"index": 0, "name": "a.mkv", "size": 100, "progress": 0.0},
+                {"index": 6, "name": "matrix.mkv", "size": 200, "progress": 0.0},
+                {"index": 9, "name": "b.mkv", "size": 100, "progress": 0.0},
+            ]
+        ),
+        _FakeResponse(status_code=200),
+        _FakeResponse(status_code=200),
+    ]
+
+    await client.select_file("abc123", 6)
+
+    calls = client._client.request.call_args_list
+    assert calls[1].args == ("POST", "/torrents/filePrio")
+    assert calls[1].kwargs["data"] == {"hash": "abc123", "id": "0|9", "priority": "0"}
+    assert calls[2].kwargs["data"] == {"hash": "abc123", "id": "6", "priority": "7"}
+
+
 async def test_remove_sends_delete_with_files(client: QBittorrentClient) -> None:
     client._client.post.return_value = _FakeResponse(status_code=200, text="Ok.")
     client._client.request.return_value = _FakeResponse(status_code=200)
