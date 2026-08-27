@@ -66,6 +66,7 @@ from app.bot.formatting import (
     format_movie_card,
     format_movie_details,
     format_movie_results,
+    format_rich_fallback,
     format_search_results,
     format_stream_buttons,
     format_tmdb_rich_message,
@@ -212,27 +213,31 @@ def register_search(
             return
         user_id = callback_query.from_user.id
         callback_message_id = getattr(callback_message, "id", None)
-        if chat_id > 0 and isinstance(callback_message_id, int):
-            await bot_api.edit_rich_message(chat_id, callback_message_id, rich_message)
-            return
-        if state.ephemeral_message_id is None:
-            result = await bot_api.send_rich_message(
+        try:
+            if chat_id > 0 and isinstance(callback_message_id, int):
+                await bot_api.edit_rich_message(chat_id, callback_message_id, rich_message)
+                return
+            if state.ephemeral_message_id is None:
+                result = await bot_api.send_rich_message(
+                    chat_id,
+                    rich_message,
+                    receiver_user_id=user_id,
+                    callback_query_id=callback_query.id,
+                    replace_callback_query_message=True,
+                )
+                message_id = result.get("ephemeral_message_id")
+                if isinstance(message_id, int):
+                    state.ephemeral_message_id = message_id
+                return
+            await bot_api.edit_ephemeral_message(
                 chat_id,
+                user_id,
+                state.ephemeral_message_id,
                 rich_message,
-                receiver_user_id=user_id,
-                callback_query_id=callback_query.id,
-                replace_callback_query_message=True,
             )
-            message_id = result.get("ephemeral_message_id")
-            if isinstance(message_id, int):
-                state.ephemeral_message_id = message_id
-            return
-        await bot_api.edit_ephemeral_message(
-            chat_id,
-            user_id,
-            state.ephemeral_message_id,
-            rich_message,
-        )
+        except BotAPIError:
+            text, markup = format_rich_fallback(rich_message)
+            await callback_message.edit_text(text, reply_markup=markup)
 
     @app.on_message(filters.command("find") & authorized)  # type: ignore[misc]
     async def _find(client: Client, message: Message) -> None:

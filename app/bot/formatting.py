@@ -255,7 +255,11 @@ def _button(text: str, callback_data: str, style: str = "primary") -> dict[str, 
 
 
 def _button_row(*buttons: dict[str, object]) -> dict[str, object]:
-    return {"type": "buttons", "buttons": list(buttons), "align": "center"}
+    return {"type": "buttons", "buttons": list(buttons), "align": "left"}
+
+
+def _photo(url: str) -> dict[str, object]:
+    return {"type": "photo", "photo": {"type": "photo", "media": url}}
 
 
 def format_main_menu(first_name: str, channel_title: str | None) -> dict[str, object]:
@@ -426,7 +430,29 @@ def format_movie_details(movie: TMDBMovie, metadata: TMDBMetadata) -> dict[str, 
         },
     ]
     if metadata.poster_url:
-        blocks.insert(1, {"type": "image", "media": metadata.poster_url})
+        blocks.insert(1, _photo(metadata.poster_url))
+    if metadata.backdrop_urls:
+        blocks.extend(
+            [
+                {"type": "heading", "text": "Imagens do filme", "size": 4},
+                {
+                    "type": "slideshow",
+                    "blocks": [_photo(url) for url in metadata.backdrop_urls],
+                },
+            ]
+        )
+    cast_photos = [member.profile_url for member in metadata.cast if member.profile_url]
+    if cast_photos:
+        blocks.extend(
+            [
+                {"type": "heading", "text": "Elenco", "size": 4},
+                {"type": "slideshow", "blocks": [_photo(url) for url in cast_photos]},
+            ]
+        )
+    if metadata.cast:
+        blocks.append(
+            {"type": "paragraph", "text": ", ".join(member.name for member in metadata.cast)}
+        )
     blocks.extend(
         [
             _button_row(_button("Ver fontes", "sources:0")),

@@ -467,6 +467,53 @@ def test_movie_details_exposes_source_search_and_back() -> None:
     assert "The Matrix" in json.dumps(message, ensure_ascii=False)
 
 
+def test_movie_details_uses_supported_photo_and_slideshow_blocks() -> None:
+    movie = TMDBMovie(603, "The Matrix", "The Matrix", None, None, 8.2, "1999-03-31")
+    metadata = TMDBMetadata(
+        title="The Matrix",
+        original_title="The Matrix",
+        overview="A realidade não é o que parece.",
+        poster_url="https://image.tmdb.org/poster.jpg",
+        vote_average=8.2,
+        genres=["Ação"],
+        release_date="1999-03-31",
+        cast=[
+            TMDBCastMember("Keanu Reeves", "https://image.tmdb.org/keanu.jpg"),
+            TMDBCastMember("Carrie-Anne Moss", "https://image.tmdb.org/carrie.jpg"),
+        ],
+        backdrop_urls=[
+            "https://image.tmdb.org/backdrop-1.jpg",
+            "https://image.tmdb.org/backdrop-2.jpg",
+        ],
+    )
+
+    message = format_movie_details(movie, metadata)
+    blocks = message["blocks"]
+
+    assert not any(block.get("type") == "image" for block in blocks)
+    assert blocks[1] == {
+        "type": "photo",
+        "photo": {"type": "photo", "media": metadata.poster_url},
+    }
+    slideshows = [block for block in blocks if block.get("type") == "slideshow"]
+    assert len(slideshows) == 2
+    assert all(
+        photo["type"] == "photo" and photo["photo"]["type"] == "photo"
+        for slideshow in slideshows
+        for photo in slideshow["blocks"]
+    )
+    assert "Keanu Reeves, Carrie-Anne Moss" in json.dumps(message, ensure_ascii=False)
+
+
+def test_rich_buttons_are_left_aligned() -> None:
+    message = format_main_menu("Neo", None)
+
+    button_blocks = [block for block in message["blocks"] if block.get("type") == "buttons"]
+
+    assert button_blocks
+    assert all(block["align"] == "left" for block in button_blocks)
+
+
 def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
     candidates = [
         (

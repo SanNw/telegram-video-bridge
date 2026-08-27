@@ -199,7 +199,7 @@ async def test_expired_source_token_returns_alert(make_settings: Any) -> None:
     assert callback.answers[-1] == ("Essa fonte expirou.", True)
 
 
-async def test_bot_api_rejection_becomes_callback_alert(make_settings: Any) -> None:
+async def test_bot_api_rejection_falls_back_without_technical_alert(make_settings: Any) -> None:
     class _FailingBotAPI(_FakeBotAPI):
         async def send_rich_message(self, *args: Any, **kwargs: Any) -> dict[str, object]:
             raise BotAPIError("rejected")
@@ -213,7 +213,8 @@ async def test_bot_api_rejection_becomes_callback_alert(make_settings: Any) -> N
 
     await dispatch_callback(client, callback)
 
-    assert callback.answers[-1] == ("rejected", True)
+    assert "Movie 0" in callback.message.edits[-1]
+    assert callback.answers[-1] == ("", False)
 
 
 async def test_legacy_catalog_find_pagination_and_movie_selection(make_settings: Any) -> None:
