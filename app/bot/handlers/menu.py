@@ -86,13 +86,16 @@ def register(
             screen = await _screen(
                 data, playback, addons, getattr(user, "first_name", None) or "administrador"
             )
-            await bot_api.send_rich_message(
-                message.chat.id,
-                screen,
-                receiver_user_id=user.id,
-                callback_query_id=callback_query.id,
-                replace_callback_query_message=True,
-            )
+            if message.chat.id > 0 and isinstance(getattr(message, "id", None), int):
+                await bot_api.edit_rich_message(message.chat.id, message.id, screen)
+            else:
+                await bot_api.send_rich_message(
+                    message.chat.id,
+                    screen,
+                    receiver_user_id=user.id,
+                    callback_query_id=callback_query.id,
+                    replace_callback_query_message=True,
+                )
         except BotAPIError:
             text, markup = format_rich_fallback(screen)
             await message.edit_text(text, reply_markup=markup)
@@ -130,11 +133,15 @@ def register(
             }
         else:
             screen = {"blocks": [{"type": "paragraph", "text": "Busca no canal não configurada."}]}
-        await bot_api.send_rich_message(
-            message.chat.id,
-            screen,
-            receiver_user_id=message.from_user.id,
-        )
+        try:
+            await bot_api.send_rich_message(
+                message.chat.id,
+                screen,
+                receiver_user_id=message.from_user.id,
+            )
+        except BotAPIError:
+            text, markup = format_rich_fallback(screen)
+            await message.reply_text(text, reply_markup=markup)
 
 
 async def _screen(

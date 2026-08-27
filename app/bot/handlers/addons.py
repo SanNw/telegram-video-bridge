@@ -211,6 +211,10 @@ def register_search(
         if chat_id is None:
             return
         user_id = callback_query.from_user.id
+        callback_message_id = getattr(callback_message, "id", None)
+        if chat_id > 0 and isinstance(callback_message_id, int):
+            await bot_api.edit_rich_message(chat_id, callback_message_id, rich_message)
+            return
         if state.ephemeral_message_id is None:
             result = await bot_api.send_rich_message(
                 chat_id,

@@ -38,7 +38,7 @@ class BotAPIClient:
         replace_callback_query_message: bool = False,
     ) -> dict[str, object]:
         payload: dict[str, object] = {"chat_id": chat_id, "rich_message": rich_message}
-        if receiver_user_id is not None:
+        if receiver_user_id is not None and chat_id < 0:
             payload["ephemeral_message_parameters"] = {
                 "receiver_user_id": receiver_user_id,
                 **({"callback_query_id": callback_query_id} if callback_query_id else {}),
@@ -48,6 +48,17 @@ class BotAPIClient:
         if not isinstance(result, dict):
             raise BotAPIError("Telegram Bot API returned an invalid result")
         return result
+
+    async def edit_rich_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        rich_message: dict[str, object],
+    ) -> None:
+        await self._post(
+            "editMessageText",
+            {"chat_id": chat_id, "message_id": message_id, "rich_message": rich_message},
+        )
 
     async def edit_ephemeral_message(
         self,

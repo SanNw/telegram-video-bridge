@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock
 from app.bot.auth import build_authorized_filter, build_owner_filter
 from app.bot.handlers import menu
 from app.services.tmdb_service import TMDBMovie
+from app.telegram.bot_api import BotAPIError
 from tests.test_bot_handlers import (
     FakeCallbackQuery,
     FakeClient,
@@ -68,6 +70,36 @@ async def test_help_topics_replace_the_existing_message(make_settings: Any) -> N
 
     assert len(bot_api.sent) == 3
     assert all(item["replace_callback_query_message"] is True for item in bot_api.sent)
+
+
+async def test_private_help_button_edits_the_existing_rich_message(make_settings: Any) -> None:
+    class _PrivateBotAPI(_FakeBotAPI):
+        async def edit_rich_message(
+            self, chat_id: int, message_id: int, rich_message: dict[str, object]
+        ) -> None:
+            self.edited.append(
+                {"chat_id": chat_id, "message_id": message_id, "rich_message": rich_message}
+            )
+
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    bot_api = _PrivateBotAPI()
+    menu.register(
+        client,
+        _FakeService(),
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        bot_api,
+    )
+    callback = _callback("menu:help", 111)
+    callback.message.chat = SimpleNamespace(id=111)
+    callback.message.id = 9
+
+    assert await dispatch_callback(client, callback)
+    assert bot_api.sent == []
+    assert bot_api.edited[0]["message_id"] == 9
+    assert '"type": "buttons"' in json.dumps(bot_api.edited[0]["rich_message"])
 
 
 async def test_control_buttons_call_existing_playback_methods(make_settings: Any) -> None:
@@ -135,6 +167,38 @@ async def test_find_button_consumes_next_text_without_slash_command(make_setting
 
     addons.search_catalog.assert_awaited_once_with("The Matrix")  # type: ignore[attr-defined]
     assert "movie:0" in str(bot_api.sent[-1]["rich_message"])
+
+
+async def test_private_find_falls_back_when_rich_message_is_rejected(
+    make_settings: Any,
+) -> None:
+    class _RejectedBotAPI(_FakeBotAPI):
+        async def send_rich_message(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+            raise BotAPIError("Bad Request: BOT_NOT_ADMIN")
+
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    addons = _FakeAddonService()
+    addons.search_catalog = AsyncMock(  # type: ignore[attr-defined]
+        return_value=[TMDBMovie(1, "The Matrix", None, None, None, 8.2, "1999-03-31")]
+    )
+    menu.register(
+        client,
+        _FakeService(),
+        addons,
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        _RejectedBotAPI(),
+    )
+    callback = _callback("menu:find", 111)
+    callback.message.chat = SimpleNamespace(id=111)
+    await dispatch_callback(client, callback)
+    reply = FakeMessage("matrix", 111)
+    reply.chat = SimpleNamespace(id=111)
+
+    assert await dispatch(client, reply)
+    assert "Escolha o filme" in reply.replies[-1]
+    assert reply.reply_markups[-1].inline_keyboard[0][0].callback_data == "movie:0"
 
 
 async def test_remaining_control_buttons_call_service_methods(make_settings: Any) -> None:

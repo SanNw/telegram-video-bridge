@@ -39,6 +39,41 @@ async def test_send_rich_message_serializes_ephemeral_replacement() -> None:
     await http.aclose()
 
 
+async def test_send_rich_message_omits_ephemeral_parameters_in_private_chat() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 7}})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = BotAPIClient("123:secret", http=http)
+
+    await client.send_rich_message(
+        111,
+        {
+            "blocks": [
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {
+                            "text": "Buscar filme",
+                            "style": "primary",
+                            "callback_data": "menu:find",
+                        }
+                    ],
+                }
+            ]
+        },
+        receiver_user_id=111,
+    )
+
+    payload = json.loads(requests[0].content)
+    assert "ephemeral_message_parameters" not in payload
+    assert payload["rich_message"]["blocks"][0]["type"] == "buttons"
+    await http.aclose()
+
+
 async def test_edit_ephemeral_message_serializes_identity() -> None:
     requests: list[httpx.Request] = []
 
@@ -58,6 +93,28 @@ async def test_edit_ephemeral_message_serializes_identity() -> None:
 
     assert requests[0].url.path.endswith("/editEphemeralMessageText")
     assert json.loads(requests[0].content)["ephemeral_message_id"] == 77
+    await http.aclose()
+
+
+async def test_edit_rich_message_serializes_persistent_message_identity() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = BotAPIClient("123:secret", http=http)
+    rich_message = {"blocks": [{"type": "paragraph", "text": "Atualizado"}]}
+
+    await client.edit_rich_message(111, 9, rich_message)
+
+    assert requests[0].url.path.endswith("/editMessageText")
+    assert json.loads(requests[0].content) == {
+        "chat_id": 111,
+        "message_id": 9,
+        "rich_message": rich_message,
+    }
     await http.aclose()
 
 
