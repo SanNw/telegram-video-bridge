@@ -464,6 +464,8 @@ def test_movie_details_exposes_source_search_and_back() -> None:
     message = format_movie_details(movie, metadata)
 
     assert rich_callback_actions(message) == {"sources:0", "flow:back", "flow:cancel"}
+    assert "▶ Assistir agora" in json.dumps(message, ensure_ascii=False)
+    assert "Ver fontes" not in json.dumps(message, ensure_ascii=False)
     assert "The Matrix" in json.dumps(message, ensure_ascii=False)
 
 
@@ -545,6 +547,10 @@ def test_candidate_page_shows_ranked_metadata_and_navigation() -> None:
         "flow:refresh",
         "flow:cancel",
     }
+    assert '"type": "buttons"' in text
+    assert "↻ Atualizar opções" in text
+    assert "◀ Voltar ao filme" in text
+    assert "✕ Fechar" in text
 
 
 def test_controls_screen_exposes_every_playback_action() -> None:

@@ -400,10 +400,46 @@ async def test_resolve_candidates_filters_deduplicates_and_ranks(
     candidates = await service.resolve_candidates()
 
     assert [(candidate.quality, candidate.seeds) for _, _, candidate in candidates] == [
+        ("720p", 300),
         ("1080p", 200),
         ("1080p", 20),
         ("1080p", None),
-        ("720p", 300),
+    ]
+
+
+async def test_resolve_candidates_uses_quality_and_language_as_seed_tiebreakers(
+    service: AddonService, fake_manager: _FakeManager
+) -> None:
+    service._last_metadata = TMDBMetadata(
+        title="The Matrix",
+        original_title="The Matrix",
+        overview=None,
+        poster_url=None,
+        vote_average=8.2,
+        genres=["Action"],
+        release_date="1999-03-31",
+        cast=[],
+        backdrop_urls=[],
+    )
+    service._last_results = [
+        SearchResult(media_id="tt0133093", title="The Matrix", year=1999, addon_name="stremio")
+    ]
+    fake_manager.stream_results_by_addon = {
+        "stremio": [
+            StreamCandidate(title="The Matrix 1999 Legendado", quality="1080p", seeds=100),
+            StreamCandidate(title="The Matrix 1999 Dual Audio", quality="1080p", seeds=100),
+            StreamCandidate(title="The Matrix 1999 Dublado", quality="1080p", seeds=100),
+            StreamCandidate(title="The Matrix 1999 Dublado", quality="720p", seeds=100),
+        ]
+    }
+
+    candidates = await service.resolve_candidates()
+
+    assert [(candidate.quality, candidate.title) for _, _, candidate in candidates] == [
+        ("1080p", "The Matrix 1999 Dublado"),
+        ("1080p", "The Matrix 1999 Dual Audio"),
+        ("1080p", "The Matrix 1999 Legendado"),
+        ("720p", "The Matrix 1999 Dublado"),
     ]
 
 

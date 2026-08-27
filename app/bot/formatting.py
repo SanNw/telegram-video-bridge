@@ -455,10 +455,10 @@ def format_movie_details(movie: TMDBMovie, metadata: TMDBMetadata) -> dict[str, 
         )
     blocks.extend(
         [
-            _button_row(_button("Ver fontes", "sources:0")),
+            _button_row(_button("▶ Assistir agora", "sources:0", "success")),
             _button_row(
                 _button("◀ Voltar", "flow:back"),
-                _button("Cancelar", "flow:cancel", "danger"),
+                _button("✕ Fechar", "flow:cancel", "danger"),
             ),
         ]
     )
@@ -473,7 +473,11 @@ def format_candidate_page(
     start = page * page_size
     visible = candidates[start : start + page_size]
     blocks: list[dict[str, object]] = [
-        {"type": "heading", "text": "Escolha a fonte", "size": 2},
+        {"type": "heading", "text": "Escolha como assistir", "size": 2},
+        {
+            "type": "paragraph",
+            "text": "Versões ordenadas por seeds, qualidade e idioma.",
+        },
     ]
     for token, result, candidate in visible:
         blocks.append(
@@ -493,10 +497,10 @@ def format_candidate_page(
         blocks.append(_button_row(*navigation))
     blocks.extend(
         [
-            _button_row(_button("Atualizar", "flow:refresh")),
+            _button_row(_button("↻ Atualizar opções", "flow:refresh")),
             _button_row(
-                _button("◀ Voltar", "flow:back"),
-                _button("Cancelar", "flow:cancel", "danger"),
+                _button("◀ Voltar ao filme", "flow:back"),
+                _button("✕ Fechar", "flow:cancel", "danger"),
             ),
         ]
     )

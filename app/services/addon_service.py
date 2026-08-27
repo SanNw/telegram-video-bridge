@@ -396,14 +396,16 @@ class AddonService:
 
 def _candidate_sort_key(
     item: tuple[SearchResult, StreamCandidate],
-) -> tuple[int, bool, int, bool, bool, int]:
+) -> tuple[bool, int, int, int, bool, int]:
     _, candidate = item
     label = f"{candidate.title} {candidate.quality or ''}"
+    flag = detect_language_flag(label)
+    language_rank = {"🇧🇷": 0, "🇧🇷🇺🇸": 1, "🇺🇸": 2}.get(flag, 3) if flag else 3
     return (
-        -(stream_resolution(label) or 0),
         candidate.seeds is None,
         -(candidate.seeds or 0),
-        detect_language_flag(label) is None,
+        -(stream_resolution(label) or 0),
+        language_rank,
         candidate.size_bytes is None,
         candidate.size_bytes or 0,
     )

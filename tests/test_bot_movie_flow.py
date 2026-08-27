@@ -136,6 +136,39 @@ async def test_movie_callback_replaces_message_with_user_specific_details(
     assert "Movie 0" in json.dumps(sent["rich_message"])
 
 
+async def test_private_watch_button_replaces_details_with_internal_source_buttons(
+    make_settings: Any,
+) -> None:
+    class _PrivateBotAPI(_FakeBotAPI):
+        async def edit_rich_message(
+            self, chat_id: int, message_id: int, rich_message: dict[str, object]
+        ) -> None:
+            self.edited.append(
+                {"chat_id": chat_id, "message_id": message_id, "rich_message": rich_message}
+            )
+
+    client = FakeClient()
+    service = _RichAddonService()
+    bot_api = _PrivateBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(client, service, authorized, True, bot_api=bot_api)  # type: ignore[arg-type]
+    movie = _callback("movie:0", 111)
+    movie.message.chat = SimpleNamespace(id=111)
+    movie.message.id = 9
+    watch = _callback("sources:0", 111)
+    watch.message.chat = SimpleNamespace(id=111)
+    watch.message.id = 9
+
+    await dispatch_callback(client, movie)
+    await dispatch_callback(client, watch)
+
+    source_screen = bot_api.edited[-1]["rich_message"]
+    assert "source:0" in json.dumps(source_screen)
+    assert all(
+        block["type"] == "buttons" for block in source_screen["blocks"] if "buttons" in block
+    )
+
+
 async def test_two_users_keep_independent_candidates(make_settings: Any) -> None:
     client = FakeClient()
     service = _RichAddonService()

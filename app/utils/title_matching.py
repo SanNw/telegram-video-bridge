@@ -18,7 +18,7 @@ from rapidfuzz import fuzz
 _RESOLUTION_RE = re.compile(r"(?<!\d)(720|1080|1440|2160|4320)p?\b", re.IGNORECASE)
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 _RELEASE_NOISE_RE = re.compile(
-    r"\b(?:bluray|blu-ray|web(?:-?dl)?|webrip|hdrip|hdr|dv|x26[45]|h26[45]|hevc|av1|dts|aac|ddp?\d?(?:\.\d)?|remux|dublado|legendado|dual(?:-?audio)?)\b",
+    r"\b(?:bluray|blu-ray|web(?:-?dl)?|webrip|hdrip|hdr|dv|x26[45]|h26[45]|hevc|av1|dts|aac|ddp?\d?(?:\.\d)?|remux|dublado|legendado|dual(?:[\s-]?audio)?)\b",
     re.IGNORECASE,
 )
 
