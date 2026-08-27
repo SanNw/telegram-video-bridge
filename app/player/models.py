@@ -27,6 +27,8 @@ class QueueItem:
     subtitle_path: str | None = None
     subtitle_delay_ms: int = 0
     subtitles_enabled: bool = True
+    media_id: str | None = None
+    display_title: str | None = None
     added_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +39,8 @@ class QueueItem:
             "subtitle_path": self.subtitle_path,
             "subtitle_delay_ms": self.subtitle_delay_ms,
             "subtitles_enabled": self.subtitles_enabled,
+            "media_id": self.media_id,
+            "display_title": self.display_title,
             "added_at": self.added_at.isoformat(),
         }
 
@@ -48,6 +52,8 @@ class QueueItem:
             subtitle_path=data.get("subtitle_path"),
             subtitle_delay_ms=int(data.get("subtitle_delay_ms", 0)),
             subtitles_enabled=bool(data.get("subtitles_enabled", True)),
+            media_id=data.get("media_id"),
+            display_title=data.get("display_title"),
             added_at=datetime.fromisoformat(str(data["added_at"])),
         )
 

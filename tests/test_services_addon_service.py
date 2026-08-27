@@ -357,7 +357,12 @@ async def test_pick_success_plays_best_stream(
     position = await service.pick(1, requested_by=111)
 
     assert position == 3
-    playback.play.assert_awaited_once_with("https://example.com/best.mp4", 111)
+    playback.play.assert_awaited_once_with(
+        "https://example.com/best.mp4",
+        111,
+        media_id="1",
+        display_title="Movie",
+    )
 
 
 async def test_resolve_candidates_filters_deduplicates_and_ranks(
@@ -530,7 +535,12 @@ async def test_pick_candidate_success_plays_and_returns_addon_name(
 
     assert addon_name == "archive_org"
     assert position == 3
-    playback.play.assert_awaited_once_with("https://a.example/1.mp4", 111)
+    playback.play.assert_awaited_once_with(
+        "https://a.example/1.mp4",
+        111,
+        media_id="1",
+        display_title="Movie A",
+    )
 
 
 async def test_play_resolved_candidate_does_not_depend_on_global_tokens(
@@ -542,7 +552,35 @@ async def test_play_resolved_candidate_does_not_depend_on_global_tokens(
     addon_name, position = await service.play_resolved_candidate(result, candidate, 222)
 
     assert (addon_name, position) == ("archive_org", 3)
-    playback.play.assert_awaited_once_with("https://a.example/1.mp4", 222)
+    playback.play.assert_awaited_once_with(
+        "https://a.example/1.mp4",
+        222,
+        media_id="1",
+        display_title="Movie A",
+    )
+
+
+async def test_play_candidate_passes_normalized_movie_context(
+    service: AddonService, playback: MagicMock
+) -> None:
+    result = SearchResult(
+        media_id="movie:tt0133093",
+        title="The Matrix",
+        addon_name="stremio",
+    )
+    candidate = StreamCandidate(
+        url="https://example.com/matrix.mp4",
+        title="The Matrix 1080p Dublado",
+    )
+
+    await service.play_resolved_candidate(result, candidate, 222)
+
+    playback.play.assert_awaited_once_with(
+        "https://example.com/matrix.mp4",
+        222,
+        media_id="tt0133093",
+        display_title="The Matrix",
+    )
 
 
 async def test_pick_candidate_unknown_token_raises(service: AddonService) -> None:
@@ -596,7 +634,9 @@ async def test_pick_resolves_torrent_candidate_and_plays_path(
 
     assert position == 3
     assert torrent_service.resolve_calls == [torrent_candidate]
-    playback.play.assert_awaited_once_with("/media/torrents/movie.mkv", 111)
+    playback.play.assert_awaited_once_with(
+        "/media/torrents/movie.mkv", 111, media_id="1", display_title="Movie"
+    )
 
 
 async def test_pick_falls_back_to_next_candidate_on_torrent_timeout(
@@ -627,7 +667,9 @@ async def test_pick_falls_back_to_next_candidate_on_torrent_timeout(
 
     assert position == 3
     assert calls["count"] == 1
-    playback.play.assert_awaited_once_with("https://example.com/fallback.mp4", 111)
+    playback.play.assert_awaited_once_with(
+        "https://example.com/fallback.mp4", 111, media_id="1", display_title="Movie"
+    )
 
 
 async def test_pick_raises_when_all_torrent_candidates_timeout(
@@ -671,7 +713,9 @@ async def test_pick_candidate_resolves_torrent_and_plays_path(
 
     assert addon_name == "archive_org"
     assert position == 3
-    playback.play.assert_awaited_once_with("/media/torrents/movie.mkv", 111)
+    playback.play.assert_awaited_once_with(
+        "/media/torrents/movie.mkv", 111, media_id="1", display_title="Movie A"
+    )
 
 
 async def test_pick_candidate_does_not_fall_back_on_torrent_timeout(

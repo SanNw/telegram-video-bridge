@@ -215,6 +215,27 @@ async def test_play_starts_immediately_when_idle(
     assert len(call.joined) == 1
 
 
+async def test_play_persists_movie_context(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    video = tmp_path / "media" / "movie.mp4"
+    video.parent.mkdir(parents=True, exist_ok=True)
+    video.write_bytes(b"x")
+
+    await service.play(
+        "movie.mp4",
+        1,
+        media_id="tt0133093",
+        display_title="The Matrix",
+    )
+
+    queue, _, _ = _fakes(service)
+    current = queue.snapshot().current
+    assert current is not None
+    assert (current.media_id, current.display_title) == ("tt0133093", "The Matrix")
+
+
 async def test_play_only_enqueues_when_already_active(
     make_service: Callable[..., PlaybackService], tmp_path: Path
 ) -> None:

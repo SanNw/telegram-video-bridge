@@ -244,9 +244,13 @@ class AddonService:
             if has_portuguese_audio(f"{candidate.title} {candidate.quality or ''}")
             else await self._prepare_subtitle(result)
         )
+        movie_context = {
+            "media_id": result.media_id.rsplit(":", 1)[-1],
+            "display_title": result.title,
+        }
         if subtitle_path is None:
-            return await self._playback.play(source, requested_by)
-        return await self._playback.play(source, requested_by, subtitle_path)
+            return await self._playback.play(source, requested_by, **movie_context)
+        return await self._playback.play(source, requested_by, subtitle_path, **movie_context)
 
     async def _prepare_subtitle(self, result: SearchResult) -> str | None:
         """Baixa a melhor legenda PT-BR/pt quando o catálogo fornece IMDb ID."""

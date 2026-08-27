@@ -124,7 +124,13 @@ class PlaybackService:
         _logger.info("PlaybackService encerrado.")
 
     async def play(
-        self, source_raw: str, requested_by: int, subtitle_path: str | None = None
+        self,
+        source_raw: str,
+        requested_by: int,
+        subtitle_path: str | None = None,
+        *,
+        media_id: str | None = None,
+        display_title: str | None = None,
     ) -> int:
         """Valida e enfileira `source_raw`; inicia a reprodução imediatamente se ociosa.
 
@@ -133,7 +139,11 @@ class PlaybackService:
         """
         media_source = resolve_source(source_raw, self._settings.media_path)
         item = QueueItem(
-            source=media_source, requested_by=requested_by, subtitle_path=subtitle_path
+            source=media_source,
+            requested_by=requested_by,
+            subtitle_path=subtitle_path,
+            media_id=media_id,
+            display_title=display_title,
         )
         position = await self._queue.add(item)
 
