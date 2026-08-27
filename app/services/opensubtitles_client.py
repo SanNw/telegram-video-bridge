@@ -55,10 +55,14 @@ class OpenSubtitlesClient:
             )
 
     async def search(self, imdb_id: str) -> list[SubtitleOption]:
+        try:
+            numeric_imdb_id = str(int(imdb_id.removeprefix("tt")))
+        except ValueError as exc:
+            raise OpenSubtitlesError("IMDb ID inválido.") from exc
         response = await self._authenticated_request(
             "GET",
             "/subtitles",
-            params={"imdb_id": imdb_id.removeprefix("tt"), "languages": "pt-BR,pt"},
+            params={"imdb_id": numeric_imdb_id, "languages": "pt-BR,pt"},
         )
         try:
             entries = response.json().get("data", [])

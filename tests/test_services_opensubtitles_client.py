@@ -22,7 +22,7 @@ async def test_search_logs_in_and_returns_portuguese_files() -> None:
             return httpx.Response(200, json={"token": "jwt"})
         assert request.url.path.endswith("/subtitles")
         assert request.headers["Authorization"] == "Bearer jwt"
-        assert request.url.params["imdb_id"] == "0133093"
+        assert request.url.params["imdb_id"] == "133093"
         assert request.url.params["languages"] == "pt-BR,pt"
         return httpx.Response(
             200,
