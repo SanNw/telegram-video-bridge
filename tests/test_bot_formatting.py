@@ -21,14 +21,18 @@ from app.bot.formatting import (
     format_movie_results,
     format_now_playing,
     format_now_playing_screen,
+    format_playback_panel,
     format_queue,
     format_queue_screen,
     format_search_results,
     format_status,
     format_stream_buttons,
+    format_subtitle_options,
+    format_subtitle_panel,
     format_timedelta,
     format_tmdb_rich_message,
     format_uptime,
+    format_volume_panel,
     rich_callback_actions,
 )
 from app.player.models import LoopMode, PlaybackState, QueueItem
@@ -651,6 +655,86 @@ def test_controls_screen_exposes_every_playback_action() -> None:
         "control:volume:200",
         "menu:home",
     } <= actions
+
+
+def test_playback_panel_exposes_mobile_safe_controls() -> None:
+    status = ServiceStatus(
+        streaming=HealthStatus(FFmpegProcessState.RUNNING, 123, "/media/a.mp4", 0, None),
+        call=CallHealth(CallState.CONNECTED, -100, 0, None),
+        queue_length=1,
+        loop_mode=LoopMode.OFF,
+        degraded=False,
+        degraded_reason=None,
+    )
+    state = PlaybackState(current=_item("a.mp4"))
+
+    message = format_playback_panel(status, state)
+
+    assert {
+        "control:pause",
+        "control:resume",
+        "control:stop",
+        "control:skip",
+        "control:restart",
+        "menu:volume",
+        "subtitle:menu",
+        "menu:queue",
+    } <= rich_callback_actions(message)
+    _assert_mobile_safe(message)
+
+
+def test_subtitle_panels_expose_selection_and_navigation() -> None:
+    message = format_subtitle_panel(_item("a.mp4"))
+    options = format_subtitle_options(
+        "Legendas locais",
+        ["Matrix release longa.srt", "Matrix alternativa.srt"],
+        0,
+        "subtitle:local-pick",
+    )
+
+    assert {
+        "subtitle:toggle",
+        "subtitle:local:0",
+        "subtitle:search:0",
+        "subtitle:delay",
+        "menu:controls",
+    } <= rich_callback_actions(message)
+    assert {
+        "subtitle:local-pick:0",
+        "subtitle:local-pick:1",
+        "subtitle:menu",
+    } <= rich_callback_actions(options)
+    _assert_mobile_safe(message)
+    _assert_mobile_safe(options)
+
+
+def test_volume_panel_exposes_presets_and_back() -> None:
+    status = ServiceStatus(
+        streaming=HealthStatus(FFmpegProcessState.RUNNING, 123, None, 0, None),
+        call=CallHealth(CallState.CONNECTED, -100, 0, None),
+        queue_length=0,
+        loop_mode=LoopMode.OFF,
+        degraded=False,
+        degraded_reason=None,
+    )
+    actions = rich_callback_actions(format_volume_panel(status))
+    assert {
+        "control:volume:50",
+        "control:volume:100",
+        "control:volume:150",
+        "menu:controls",
+    } <= actions
+
+
+def _assert_mobile_safe(message: dict[str, object]) -> None:
+    labels = [
+        button["text"]
+        for block in message["blocks"]  # type: ignore[index]
+        if block.get("type") == "buttons"
+        for button in block["buttons"]
+    ]
+    assert all("\n" not in label and len(label) <= 16 for label in labels)
+    assert all(not any(unicodedata.category(char) == "So" for char in label) for label in labels)
 
 
 def test_queue_and_addon_screens_return_home() -> None:

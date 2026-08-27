@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -565,6 +566,111 @@ def format_controls_screen(status: ServiceStatus) -> dict[str, object]:
             _button_row(_button("Início", "menu:home")),
         ]
     }
+
+
+def format_playback_panel(status: ServiceStatus, state: PlaybackState) -> dict[str, object]:
+    current = state.current
+    title = (
+        current.display_title or Path(current.source.raw).name
+        if current is not None
+        else "Nada tocando"
+    )
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Reprodução", "size": 2},
+            {"type": "paragraph", "text": title},
+            {
+                "type": "paragraph",
+                "text": f"Streaming: {status.streaming.state.value} · Fila: {status.queue_length}",
+            },
+            _button_row(
+                _button("Pausar", "control:pause"),
+                _button("Retomar", "control:resume"),
+            ),
+            _button_row(
+                _button("Parar", "control:stop", "danger"),
+                _button("Pular", "control:skip"),
+                _button("Reiniciar", "control:restart"),
+            ),
+            _button_row(
+                _button("Volume", "menu:volume"),
+                _button("Legendas", "subtitle:menu"),
+                _button("Fila", "menu:queue"),
+            ),
+        ]
+    }
+
+
+def format_volume_panel(status: ServiceStatus) -> dict[str, object]:
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Volume", "size": 2},
+            {
+                "type": "paragraph",
+                "text": f"Streaming: {status.streaming.state.value}",
+            },
+            _button_row(
+                *(_button(f"{volume}%", f"control:volume:{volume}") for volume in (50, 100, 150))
+            ),
+            _button_row(
+                _button("200%", "control:volume:200"),
+                _button("Voltar", "menu:controls"),
+            ),
+        ]
+    }
+
+
+def format_subtitle_panel(current: QueueItem) -> dict[str, object]:
+    selected = Path(current.subtitle_path).name if current.subtitle_path else "Nenhuma"
+    state = "Ativa" if current.subtitle_path and current.subtitles_enabled else "Desativada"
+    return {
+        "blocks": [
+            {"type": "heading", "text": "Legendas", "size": 2},
+            {"type": "paragraph", "text": f"Faixa: {selected}\nEstado: {state}"},
+            _button_row(
+                _button("Ligar/desligar", "subtitle:toggle"),
+                _button("Ajustar tempo", "subtitle:delay"),
+            ),
+            _button_row(
+                _button("Arquivos", "subtitle:local:0"),
+                _button("Buscar online", "subtitle:search:0"),
+            ),
+            _button_row(_button("Voltar", "menu:controls")),
+        ]
+    }
+
+
+def format_subtitle_options(
+    title: str,
+    entries: list[str],
+    page: int,
+    prefix: str,
+    page_size: int = 5,
+) -> dict[str, object]:
+    start = page * page_size
+    visible = entries[start : start + page_size]
+    blocks: list[dict[str, object]] = [
+        {"type": "heading", "text": title, "size": 2},
+        {
+            "type": "paragraph",
+            "text": "\n".join(
+                f"{index}. {name}" for index, name in enumerate(visible, start=start + 1)
+            )
+            or "Nenhuma legenda encontrada.",
+        },
+    ]
+    blocks.extend(
+        _button_row(_button(f"Escolher {index + 1}", f"{prefix}:{index}"))
+        for index in range(start, start + len(visible))
+    )
+    navigation: list[dict[str, object]] = []
+    if page > 0:
+        navigation.append(_button("Anterior", f"{prefix.rsplit(':', 1)[0]}:{page - 1}"))
+    if start + page_size < len(entries):
+        navigation.append(_button("Próxima", f"{prefix.rsplit(':', 1)[0]}:{page + 1}"))
+    navigation.append(_button("Voltar", "subtitle:menu"))
+    blocks.append(_button_row(*navigation))
+    return {"blocks": blocks}
 
 
 def format_addons_screen(addons: list[AddonInfo]) -> dict[str, object]:
