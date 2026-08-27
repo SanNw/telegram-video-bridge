@@ -111,6 +111,24 @@ def test_tmdb_defaults(make_settings: Callable[..., Settings]) -> None:
     assert settings.tmdb_request_timeout_seconds == 10.0
 
 
+def test_opensubtitles_is_disabled_without_api_key(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(opensubtitles_api_key=None)
+    assert settings.opensubtitles_enabled is False
+
+
+def test_opensubtitles_is_enabled_with_all_credentials(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(
+        opensubtitles_api_key="key",
+        opensubtitles_username="user",
+        opensubtitles_password="secret",
+    )
+    assert settings.opensubtitles_enabled is True
+
+
 def test_bot_token_defaults_to_none(make_settings: Callable[..., Settings]) -> None:
     settings = make_settings()
     assert settings.bot_token is None
