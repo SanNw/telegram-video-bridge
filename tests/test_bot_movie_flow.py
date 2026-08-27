@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -200,6 +201,39 @@ async def test_source_callback_edits_progress_then_success(make_settings: Any) -
     assert len(bot_api.edited) == 2
     assert "Preparando" in json.dumps(bot_api.edited[0]["rich_message"], ensure_ascii=False)
     assert "fila" in json.dumps(bot_api.edited[1]["rich_message"], ensure_ascii=False)
+
+
+async def test_source_callback_is_answered_before_waiting_for_download(
+    make_settings: Any,
+) -> None:
+    class _SlowService(_RichAddonService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def play_resolved_candidate(
+            self, result: SearchResult, candidate: StreamCandidate, requested_by: int
+        ) -> tuple[str, int]:
+            self.entered.set()
+            await self.release.wait()
+            return await super().play_resolved_candidate(result, candidate, requested_by)
+
+    client = FakeClient()
+    service = _SlowService()
+    bot_api = _FakeBotAPI()
+    authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
+    addons.register_search(client, service, authorized, True, bot_api=bot_api)  # type: ignore[arg-type]
+    await dispatch_callback(client, _callback("movie:0", 111))
+    callback = _callback("source:0", 111)
+
+    task = asyncio.create_task(dispatch_callback(client, callback))
+    await service.entered.wait()
+    answered_while_waiting = bool(callback.answers)
+    service.release.set()
+    await task
+
+    assert answered_while_waiting is True
 
 
 async def test_source_success_replaces_progress_with_playback_panel(

@@ -306,6 +306,7 @@ def register_search(
             and user is not None
         ):
             state = _flow(callback_message.chat.id, user.id)
+            callback_answered = False
             try:
                 if data.startswith(_CATALOG_CALLBACK_PREFIX):
                     page = int(data.removeprefix(_CATALOG_CALLBACK_PREFIX))
@@ -349,6 +350,8 @@ def register_search(
                     if selected is None:
                         await callback_query.answer("Essa fonte expirou.", show_alert=True)
                         return
+                    await callback_query.answer()
+                    callback_answered = True
                     await _render(
                         callback_query,
                         state,
@@ -364,7 +367,6 @@ def register_search(
                             state,
                             format_playback_panel(playback.status(), playback.queue_snapshot()),
                         )
-                        await callback_query.answer()
                         return
                     await _render(
                         callback_query,
@@ -378,7 +380,8 @@ def register_search(
                             ]
                         },
                     )
-                await callback_query.answer()
+                if not callback_answered:
+                    await callback_query.answer()
                 return
             except (TorrentTimeoutError, TorrentResolutionError) as exc:
                 _logger.warning("Falha ao preparar torrent selecionado: {err}", err=exc)
@@ -410,10 +413,12 @@ def register_search(
                         ]
                     },
                 )
-                await callback_query.answer()
+                if not callback_answered:
+                    await callback_query.answer()
                 return
             except (BotAPIError, InvalidSearchIndexError, NoStreamsAvailableError) as exc:
-                await callback_query.answer(str(exc), show_alert=True)
+                if not callback_answered:
+                    await callback_query.answer(str(exc), show_alert=True)
                 return
         if data.startswith(_CATALOG_CALLBACK_PREFIX):
             page = int(data.removeprefix(_CATALOG_CALLBACK_PREFIX))
