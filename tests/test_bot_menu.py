@@ -50,6 +50,26 @@ async def test_main_menu_and_dashboard_actions_render(make_settings: Any) -> Non
     assert len(bot_api.sent) == 5
 
 
+async def test_help_topics_replace_the_existing_message(make_settings: Any) -> None:
+    settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
+    client = FakeClient()
+    bot_api = _FakeBotAPI()
+    menu.register(
+        client,
+        _FakeService(),
+        _FakeAddonService(),
+        build_authorized_filter(settings),
+        build_owner_filter(settings),
+        bot_api,
+    )
+
+    for action in ("menu:help", "help:movies", "help:playback"):
+        assert await dispatch_callback(client, _callback(action, 111))
+
+    assert len(bot_api.sent) == 3
+    assert all(item["replace_callback_query_message"] is True for item in bot_api.sent)
+
+
 async def test_control_buttons_call_existing_playback_methods(make_settings: Any) -> None:
     settings = make_settings(authorized_user_ids=[111], owner_user_id=111)
     client = FakeClient()

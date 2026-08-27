@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,13 +33,17 @@ class _Client:
 
 class _Message:
     def __init__(self, user_id: int, first_name: str = "Rafael") -> None:
+        self.text = "/start"
+        self.command = ["start"]
         self.from_user = SimpleNamespace(id=user_id, first_name=first_name)
         self.chat = SimpleNamespace(id=user_id)
         self.replies: list[str] = []
+        self.reply_markups: list[Any] = []
         self.stopped = False
 
-    async def reply_text(self, text: str) -> None:
+    async def reply_text(self, text: str, **kwargs: Any) -> None:
         self.replies.append(text)
+        self.reply_markups.append(kwargs.get("reply_markup"))
 
     def stop_propagation(self) -> None:
         self.stopped = True
@@ -53,74 +56,75 @@ async def _send(client: _Client, user_id: int) -> _Message:
     return message
 
 
-async def test_admin_receives_guide_once_and_persists(
-    tmp_path: Path, make_settings: Callable[..., Settings]
+async def test_start_always_opens_one_personalized_rich_menu(
+    make_settings: Callable[..., Settings],
 ) -> None:
-    path = tmp_path / "onboarding.json"
-    settings = make_settings(stream_chat_id=-1001, authorized_user_ids=[])
     client = _Client(ChatMemberStatus.ADMINISTRATOR)
-    onboarding.register(client, settings, path)  # type: ignore[arg-type]
+    bot_api = _FakeBotAPI()
+    onboarding.register(
+        client,
+        make_settings(stream_chat_id=-1001, authorized_user_ids=[]),
+        bot_api=bot_api,
+    )  # type: ignore[arg-type]
 
     first = await _send(client, 123)
     second = await _send(client, 123)
 
-    assert "/find" in first.replies[0]
-    assert "/canal" in first.replies[0]
+    assert first.replies == []
     assert second.replies == []
-    assert json.loads(path.read_text())["admins"] == [123]
-
-
-async def test_non_admin_receives_denial_once_and_command_is_stopped(
-    tmp_path: Path, make_settings: Callable[..., Settings]
-) -> None:
-    path = tmp_path / "onboarding.json"
-    settings = make_settings(stream_chat_id=-1001, authorized_user_ids=[])
-    client = _Client(ChatMemberStatus.MEMBER)
-    onboarding.register(client, settings, path)  # type: ignore[arg-type]
-
-    first = await _send(client, 456)
-    second = await _send(client, 456)
-
-    assert "não é administrador" in first.replies[0]
     assert first.stopped is True
-    assert second.replies == []
-    assert json.loads(path.read_text())["denied"] == [456]
+    assert second.stopped is True
+    assert len(bot_api.sent) == 2
+    payload = json.dumps(bot_api.sent[0]["rich_message"], ensure_ascii=False)
+    assert "TELERION" in payload
+    assert "Sua sessão de cinema começa aqui" in payload
+    assert "Rafael" in payload
 
 
-async def test_persisted_admin_is_not_greeted_after_restart(
-    tmp_path: Path, make_settings: Callable[..., Settings]
+async def test_non_admin_start_is_denied_and_stopped(
+    make_settings: Callable[..., Settings],
 ) -> None:
-    path = tmp_path / "onboarding.json"
-    path.write_text('{"admins": [123], "denied": []}', encoding="utf-8")
-    client = _Client(ChatMemberStatus.ADMINISTRATOR)
+    client = _Client(ChatMemberStatus.MEMBER)
     onboarding.register(
         client,
         make_settings(stream_chat_id=-1001, authorized_user_ids=[]),
-        path,
     )  # type: ignore[arg-type]
 
-    assert (await _send(client, 123)).replies == []
+    message = await _send(client, 456)
+
+    assert "não é administrador" in message.replies[0]
+    assert message.stopped is True
 
 
-async def test_admin_receives_personalized_rich_menu_once(
-    tmp_path: Path, make_settings: Callable[..., Settings]
+async def test_admin_rich_menu_exposes_only_premium_home_actions(
+    make_settings: Callable[..., Settings],
 ) -> None:
-    path = tmp_path / "onboarding.json"
-    settings = make_settings(stream_chat_id=-1001, authorized_user_ids=[])
     client = _Client(ChatMemberStatus.ADMINISTRATOR)
     bot_api = _FakeBotAPI()
-    onboarding.register(client, settings, path, bot_api=bot_api)  # type: ignore[arg-type]
+    onboarding.register(
+        client,
+        make_settings(stream_chat_id=-1001, authorized_user_ids=[]),
+        bot_api=bot_api,
+    )  # type: ignore[arg-type]
 
     await _send(client, 123)
 
     payload = json.dumps(bot_api.sent[0]["rich_message"], ensure_ascii=False)
-    assert "Rafael" in payload
-    assert "menu:find" in payload
-    assert json.loads(path.read_text())["admins"] == [123]
+    for action in (
+        "menu:find",
+        "menu:channel",
+        "menu:now",
+        "menu:queue",
+        "menu:controls",
+        "menu:help",
+    ):
+        assert action in payload
+    assert "menu:addons" not in payload
+    assert "menu:admin" not in payload
 
 
-async def test_onboarding_fallback_has_no_literal_markdown_markers(
-    tmp_path: Path, make_settings: Callable[..., Settings]
+async def test_rejected_rich_menu_falls_back_to_same_inline_actions(
+    make_settings: Callable[..., Settings],
 ) -> None:
     class _FailingBotAPI(_FakeBotAPI):
         async def send_rich_message(self, *args: Any, **kwargs: Any) -> dict[str, object]:
@@ -130,10 +134,21 @@ async def test_onboarding_fallback_has_no_literal_markdown_markers(
     onboarding.register(
         client,
         make_settings(stream_chat_id=-1001, authorized_user_ids=[]),
-        tmp_path / "onboarding.json",
         bot_api=_FailingBotAPI(),
     )  # type: ignore[arg-type]
 
     message = await _send(client, 123)
 
     assert "*" not in message.replies[0]
+    assert "TELERION" in message.replies[0]
+    markup = message.reply_markups[0]
+    assert markup is not None
+    actions = {button.callback_data for row in markup.inline_keyboard for button in row}
+    assert actions == {
+        "menu:find",
+        "menu:channel",
+        "menu:now",
+        "menu:queue",
+        "menu:controls",
+        "menu:help",
+    }

@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.addon_system.base import SearchResult, StreamCandidate
 from app.addon_system.manager import AddonInfo
+from app.bot import formatting
 from app.bot.formatting import (
     format_addons_screen,
     format_candidate_page,
@@ -383,12 +384,32 @@ def test_main_menu_has_expected_actions() -> None:
         "menu:now",
         "menu:queue",
         "menu:controls",
-        "menu:addons",
         "menu:help",
-        "menu:admin",
     }
     assert "Rafael" in json.dumps(message, ensure_ascii=False)
     assert "Cinema" in json.dumps(message, ensure_ascii=False)
+
+
+def test_help_home_groups_commands_into_navigable_topics() -> None:
+    message = formatting.format_help_screen()
+
+    assert rich_callback_actions(message) == {
+        "help:movies",
+        "help:playback",
+        "help:queue",
+        "help:subtitles",
+        "help:system",
+        "help:admin",
+        "menu:home",
+    }
+
+
+def test_help_topic_keeps_navigation_in_the_same_message() -> None:
+    message = formatting.format_help_topic("movies")
+    payload = json.dumps(message, ensure_ascii=False)
+
+    assert "/find <título>" in payload
+    assert rich_callback_actions(message) == {"menu:help", "menu:home"}
 
 
 def test_movie_results_exposes_selection_and_pagination() -> None:

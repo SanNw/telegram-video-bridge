@@ -566,11 +566,13 @@ async def test_start_and_help_work_for_anyone(
     client, _, _ = wired_client
     message = FakeMessage(text="/start", user_id=999)
     await dispatch(client, message)
-    assert "Telegram Video Bridge" in message.replies[0]
+    assert "TELERION" in message.replies[0]
+    assert "*" not in message.replies[0]
 
     message = FakeMessage(text="/help", user_id=999)
     await dispatch(client, message)
-    assert "Comandos" in message.replies[0]
+    assert "AJUDA" in message.replies[0]
+    assert message.reply_markups[0] is not None
 
 
 async def test_ping_replies_with_latency(

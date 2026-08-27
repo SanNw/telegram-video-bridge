@@ -1,21 +1,20 @@
-"""Boas-vindas na primeira conversa privada com o BotFather."""
+"""Boas-vindas privadas e painel principal do bot."""
 
 from __future__ import annotations
 
-import asyncio
-import json
 from collections.abc import Callable
-from pathlib import Path
 from typing import cast
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from app.bot.auth import is_stream_admin
-from app.bot.formatting import format_main_menu
+from app.bot.formatting import format_main_menu, format_rich_fallback
 from app.config.settings import Settings
 from app.telegram.bot_api import BotAPIClient, BotAPIError
+from app.utils.logging import get_logger
 
+_logger = get_logger("bot")
 _DENIED_TEXT = (
     "Você não é administrador do canal configurado. Por isso, nenhum comando de "
     "controle enviado aqui será executado."
@@ -26,69 +25,36 @@ def _stop(message: Message) -> None:
     cast(Callable[[], None], message.stop_propagation)()
 
 
-def _load(path: Path) -> dict[str, set[int]]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return {key: {int(value) for value in data.get(key, [])} for key in ("admins", "denied")}
-    except (OSError, ValueError, TypeError):
-        return {"admins": set(), "denied": set()}
-
-
-def _save(path: Path, seen: dict[str, set[int]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps({key: sorted(values) for key, values in seen.items()}), encoding="utf-8"
-    )
-    temporary.replace(path)
-
-
 def register(
     app: Client,
     settings: Settings,
-    path: Path = Path("/app/data/onboarding.json"),
     bot_api: BotAPIClient | None = None,
 ) -> None:
-    """Envia uma única apresentação por usuário e por estado de autorização."""
-    seen = _load(path)
-    lock = asyncio.Lock()
+    """Abre o painel em `/start` e impede respostas concorrentes."""
 
-    @app.on_message(filters.private, group=-1)  # type: ignore[misc]
+    @app.on_message(filters.private & filters.command("start"), group=-1)  # type: ignore[misc]
     async def _onboarding(client: Client, message: Message) -> None:
         user = message.from_user
         if user is None:
             return
-        async with lock:
-            authorized = await is_stream_admin(settings, client, user.id)
-            bucket = "admins" if authorized else "denied"
-            if user.id in seen[bucket]:
-                return
-            if authorized:
-                name = getattr(user, "first_name", None) or "administrador"
-                sent = False
-                if bot_api is not None and message.chat is not None and message.chat.id is not None:
-                    try:
-                        await bot_api.send_rich_message(
-                            message.chat.id,
-                            format_main_menu(name, None),
-                            receiver_user_id=user.id,
-                        )
-                        sent = True
-                    except BotAPIError:
-                        pass
-                if not sent:
-                    await message.reply_text(
-                        f"Olá, {name}. Bem-vindo ao Telerion.\n\n"
-                        "Use os botões do painel ou /find para buscar na internet e "
-                        "/canal para procurar filmes enviados ao canal."
-                    )
-            else:
-                await message.reply_text(_DENIED_TEXT)
-            updated = {
-                key: values | ({user.id} if key == bucket else set())
-                for key, values in seen.items()
-            }
-            _save(path, updated)
-            seen[bucket].add(user.id)
-            if not authorized:
+        if not await is_stream_admin(settings, client, user.id):
+            await message.reply_text(_DENIED_TEXT)
+            _stop(message)
+            return
+
+        screen = format_main_menu(getattr(user, "first_name", None) or "administrador", None)
+        if bot_api is not None and message.chat is not None and message.chat.id is not None:
+            try:
+                await bot_api.send_rich_message(
+                    message.chat.id,
+                    screen,
+                    receiver_user_id=user.id,
+                )
                 _stop(message)
+                return
+            except BotAPIError as exc:
+                _logger.warning("Rich Message de boas-vindas recusada: {error}", error=str(exc))
+
+        text, markup = format_rich_fallback(screen)
+        await message.reply_text(text, reply_markup=markup)
+        _stop(message)

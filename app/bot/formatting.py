@@ -262,29 +262,131 @@ def format_main_menu(first_name: str, channel_title: str | None) -> dict[str, ob
     destination = f" no canal {channel_title}" if channel_title else ""
     return {
         "blocks": [
-            {"type": "heading", "text": f"Olá, {first_name} 👋", "size": 2},
+            {"type": "heading", "text": "TELERION", "size": 2},
             {
                 "type": "paragraph",
-                "text": f"Controle o Telerion{destination} pelo painel abaixo.",
+                "text": "Sua sessão de cinema começa aqui.",
+            },
+            {
+                "type": "paragraph",
+                "text": (
+                    f"Olá, {first_name}. Encontre um filme na internet, acesse o acervo"
+                    f"{destination} ou continue de onde parou."
+                ),
             },
             _button_row(
                 _button("🎬 Buscar filme", "menu:find"),
-                _button("📺 Buscar no canal", "menu:channel"),
+                _button("▤ Acervo do canal", "menu:channel"),
             ),
             _button_row(
-                _button("▶️ Tocando agora", "menu:now"),
-                _button("📋 Ver fila", "menu:queue"),
+                _button("▶ Em reprodução", "menu:now"),
+                _button("≡ Minha fila", "menu:queue"),
             ),
             _button_row(
-                _button("⏯ Controles", "menu:controls"),
-                _button("🧩 Addons", "menu:addons"),
-            ),
-            _button_row(
-                _button("❓ Ajuda", "menu:help"),
-                _button("⚙️ Administração", "menu:admin"),
+                _button("◉ Controles", "menu:controls"),
+                _button("? Ajuda", "menu:help"),
             ),
         ]
     }
+
+
+def format_help_screen() -> dict[str, object]:
+    return {
+        "blocks": [
+            {"type": "heading", "text": "AJUDA", "size": 2},
+            {
+                "type": "paragraph",
+                "text": "Escolha uma área para consultar os recursos disponíveis no Telerion.",
+            },
+            _button_row(
+                _button("🎬 Filmes", "help:movies"),
+                _button("▶ Reprodução", "help:playback"),
+            ),
+            _button_row(
+                _button("≡ Fila", "help:queue"),
+                _button("CC Legendas", "help:subtitles"),
+            ),
+            _button_row(
+                _button("◉ Sistema", "help:system"),
+                _button("⚙ Administração", "help:admin"),
+            ),
+            _button_row(_button("‹ Início", "menu:home")),
+        ]
+    }
+
+
+_HELP_TOPICS = {
+    "movies": (
+        "FILMES",
+        "Buscar na internet\n/find <título>\n\n"
+        "Buscar no acervo do canal\n/canal <título>\n\n"
+        "Escolher um resultado\n/pick <número>",
+    ),
+    "playback": (
+        "REPRODUÇÃO",
+        "/play <fonte> — reproduzir\n/pause — pausar\n/resume — continuar\n"
+        "/stop — encerrar\n/skip — próximo filme\n/restart — reiniciar",
+    ),
+    "queue": (
+        "FILA",
+        "/queue — consultar\n/remove <posição> — remover item\n"
+        "/clear — esvaziar\n/loop <off|item|queue> — repetição",
+    ),
+    "subtitles": (
+        "LEGENDAS",
+        "/legenda <on|off> — ativar ou desativar\n" "/subdelay <ms> — ajustar sincronização",
+    ),
+    "system": (
+        "SISTEMA",
+        "/status — estado geral\n/nowplaying — filme atual\n"
+        "/uptime — tempo em execução\n/ping — latência\n/version — versão",
+    ),
+    "admin": (
+        "ADMINISTRAÇÃO",
+        "/addons — listar integrações\n"
+        "/addon <ação> <nome> — gerenciar integração\n/volume <0-200> — volume",
+    ),
+}
+
+
+def format_help_topic(topic: str) -> dict[str, object]:
+    title, text = _HELP_TOPICS.get(topic, ("AJUDA", "Área não encontrada."))
+    return {
+        "blocks": [
+            {"type": "heading", "text": title, "size": 2},
+            {"type": "paragraph", "text": text},
+            _button_row(
+                _button("‹ Ajuda", "menu:help"),
+                _button("Início", "menu:home"),
+            ),
+        ]
+    }
+
+
+def format_rich_fallback(
+    message: dict[str, object],
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    lines: list[str] = []
+    rows: list[list[InlineKeyboardButton]] = []
+    blocks = message.get("blocks")
+    if not isinstance(blocks, list):
+        return "Telerion", None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") in {"heading", "paragraph"} and isinstance(block.get("text"), str):
+            lines.append(block["text"])
+        elif block.get("type") == "buttons" and isinstance(block.get("buttons"), list):
+            row = [
+                InlineKeyboardButton(button["text"], callback_data=button["callback_data"])
+                for button in block["buttons"]
+                if isinstance(button, dict)
+                and isinstance(button.get("text"), str)
+                and isinstance(button.get("callback_data"), str)
+            ]
+            if row:
+                rows.append(row)
+    return "\n\n".join(lines), InlineKeyboardMarkup(rows) if rows else None
 
 
 def format_movie_results(

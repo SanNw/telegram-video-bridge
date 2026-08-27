@@ -2,7 +2,7 @@
 
 Autorização: públicos (sem efeito colateral, não expõem dados operacionais).
 Erros: nenhum caminho de erro — respostas são texto estático ou latência medida.
-Resposta: texto simples/Markdown, sempre uma única mensagem de resposta direta.
+Resposta: painel rico com fallback para texto e botões inline tradicionais.
 """
 
 from __future__ import annotations
@@ -14,43 +14,22 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 from app import __version__
+from app.bot.formatting import format_help_screen, format_rich_fallback
+from app.telegram.bot_api import BotAPIClient, BotAPIError
 
 _START_TEXT = (
-    "*Telegram Video Bridge*\n"
-    "Transmite vídeos autorizados para a chamada de vídeo configurada.\n\n"
-    "Use /help para ver os comandos disponíveis."
-)
-
-HELP_TEXT = (
-    "*Comandos*\n"
-    "/play <fonte> — adiciona uma fonte à fila (inicia a reprodução se ociosa)\n"
-    "/pause — pausa a chamada\n"
-    "/resume — retoma a chamada pausada\n"
-    "/stop — para a reprodução atual e sai da chamada\n"
-    "/skip — pula para o próximo item da fila\n"
-    "/restart — reinicia o item atual do zero\n"
-    "/volume <0-200> — ajusta o volume da chamada\n"
-    "/queue — lista a fila atual\n"
-    "/remove <posição> — remove um item pendente da fila\n"
-    "/loop <off|item|queue> — define o modo de repetição\n"
-    "/clear — esvazia a fila pendente\n"
-    "/status — mostra o status de streaming/chamada/fila\n"
-    "/nowplaying — mostra o item em reprodução e há quanto tempo\n"
-    "/uptime — há quanto tempo o processo está em execução\n"
-    "/find <busca> — procura fontes de mídia nos addons habilitados\n"
-    "/canal <busca> — procura um filme já enviado ao canal\n"
-    "/pick <número> — adiciona à fila um resultado do /find\n"
-    "/legenda <on|off> — ativa ou desativa legendas automáticas\n"
-    "/subdelay <ms> — adianta (negativo) ou atrasa (positivo) a legenda\n"
-    "/addons — lista addons instalados\n"
-    "/addon <info|enable|disable|reload|uninstall> <nome> — gerencia um addon\n"
-    "/ping — latência do bot\n"
-    "/version — versão em execução\n\n"
-    "_Comandos de controle exigem autorização (whitelist de user_id)._"
+    "TELERION\n\nSua sessão de cinema começa aqui.\n\n" "Use /help para abrir a central de ajuda."
 )
 
 
-def register(app: Client, authorized: filters.Filter | None = None) -> None:
+def register(
+    app: Client,
+    authorized: filters.Filter | None = None,
+    *,
+    include_start: bool = True,
+    include_help: bool = True,
+    bot_api: BotAPIClient | None = None,
+) -> None:
     """Registra `/start`, `/help`, `/ping` e `/version` em `app`."""
 
     def command(name: str) -> filters.Filter:
@@ -61,13 +40,29 @@ def register(app: Client, authorized: filters.Filter | None = None) -> None:
             else cast(filters.Filter, command_filter & authorized)
         )
 
-    @app.on_message(command("start"))  # type: ignore[misc]
-    async def _start(_: Client, message: Message) -> None:
-        await message.reply_text(_START_TEXT)
+    if include_start:
 
-    @app.on_message(command("help"))  # type: ignore[misc]
-    async def _help(_: Client, message: Message) -> None:
-        await message.reply_text(HELP_TEXT)
+        @app.on_message(command("start"))  # type: ignore[misc]
+        async def _start(_: Client, message: Message) -> None:
+            await message.reply_text(_START_TEXT)
+
+    if include_help:
+
+        @app.on_message(command("help"))  # type: ignore[misc]
+        async def _help(_: Client, message: Message) -> None:
+            screen = format_help_screen()
+            if bot_api is not None and message.chat is not None and message.chat.id is not None:
+                try:
+                    await bot_api.send_rich_message(
+                        message.chat.id,
+                        screen,
+                        receiver_user_id=message.from_user.id if message.from_user else None,
+                    )
+                    return
+                except BotAPIError:
+                    pass
+            text, markup = format_rich_fallback(screen)
+            await message.reply_text(text, reply_markup=markup)
 
     @app.on_message(command("ping"))  # type: ignore[misc]
     async def _ping(_: Client, message: Message) -> None:

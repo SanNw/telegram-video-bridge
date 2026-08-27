@@ -58,7 +58,14 @@ def build_bot(
     owner = build_owner_filter(settings)
 
     def _register_controls(client: Client, access: filters.Filter = authorized) -> None:
-        info.register(client, access if client is bot_client else None)
+        separate_bot = bot_client is not None and bot_client is not app
+        info.register(
+            client,
+            access if client is bot_client else None,
+            include_start=not separate_bot,
+            include_help=not separate_bot or client is bot_client,
+            bot_api=bot_api if client is bot_client else None,
+        )
         playback.register(client, playback_service, access)
         queue.register(client, playback_service, access)
         status.register(client, playback_service, access)

@@ -10,10 +10,13 @@ from pyrogram.types import CallbackQuery, ForceReply
 from app.bot.formatting import (
     format_addons_screen,
     format_controls_screen,
+    format_help_screen,
+    format_help_topic,
     format_main_menu,
     format_movie_results,
     format_now_playing_screen,
     format_queue_screen,
+    format_rich_fallback,
 )
 from app.player.models import LoopMode
 from app.services.addon_service import AddonService
@@ -25,7 +28,7 @@ from app.telegram.bot_api import BotAPIClient, BotAPIError
 
 def _is_menu_callback(_flt: Any, _client: Any, callback_query: Any) -> bool:
     data = getattr(callback_query, "data", None)
-    return isinstance(data, str) and data.startswith(("menu:", "control:"))
+    return isinstance(data, str) and data.startswith(("menu:", "control:", "help:"))
 
 
 menu_callback_filter = filters.create(_is_menu_callback, "MenuCallbackFilter")
@@ -90,7 +93,10 @@ def register(
                 callback_query_id=callback_query.id,
                 replace_callback_query_message=True,
             )
-        except (BotAPIError, NothingPlayingError, InvalidVolumeError) as exc:
+        except BotAPIError:
+            text, markup = format_rich_fallback(screen)
+            await message.edit_text(text, reply_markup=markup)
+        except (NothingPlayingError, InvalidVolumeError) as exc:
             await callback_query.answer(str(exc), show_alert=True)
             return
         await callback_query.answer()
@@ -146,7 +152,9 @@ async def _screen(
     if data == "menu:addons":
         return format_addons_screen(addons.list_addons())
     if data == "menu:help":
-        return {"blocks": [{"type": "paragraph", "text": "Escolha uma ação no painel."}]}
+        return format_help_screen()
+    if data.startswith("help:"):
+        return format_help_topic(data.removeprefix("help:"))
     if data == "menu:admin":
         return format_addons_screen(addons.list_addons())
     if data.startswith("control:"):

@@ -69,9 +69,26 @@ def test_build_bot_registers_search_on_bot_client_when_provided(
     # um segundo registro do fallback "não autorizado" (agora um por client):
     # 4 públicos + 7 reprodução + 4 fila + 3 status + 2 addons (addons/addon)
     # + 1 fallback = 21.
-    assert len(session_registered) == 23
+    assert len(session_registered) == 21
     # Client de bot recebe também o onboarding privado de primeiro contato.
-    assert len(bot_registered) == 26
+    assert len(bot_registered) == 25
+
+
+def test_build_bot_leaves_start_exclusively_to_bot_onboarding(
+    make_settings: Callable[..., Settings],
+) -> None:
+    settings = make_settings(authorized_user_ids=[1])
+    session_client, _ = _make_fake_client()
+    bot_client, _ = _make_fake_client()
+    service = MagicMock(client=session_client)
+
+    with patch("app.bot.client.info.register") as register_info:
+        build_bot(service, MagicMock(), settings, MagicMock(), bot_client=bot_client)
+
+    assert register_info.call_count == 2
+    assert all(call.kwargs["include_start"] is False for call in register_info.call_args_list)
+    assert register_info.call_args_list[0].kwargs["include_help"] is False
+    assert register_info.call_args_list[1].kwargs["include_help"] is True
 
 
 def test_build_bot_uses_service_client_not_a_new_session(
