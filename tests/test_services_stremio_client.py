@@ -19,9 +19,12 @@ from app.services.stremio_client import StremioAddonClient, StremioAddonRegistry
 class _FakeResponse:
     """Dublê mínimo de `httpx.Response`: `raise_for_status()` + `json()`."""
 
-    def __init__(self, json_data: Any = None, status_error: bool = False) -> None:
+    def __init__(
+        self, json_data: Any = None, status_error: bool = False, content: bytes = b""
+    ) -> None:
         self._json_data = json_data
         self._status_error = status_error
+        self.content = content
         self.status_code = 500 if status_error else 200
 
     def raise_for_status(self) -> None:
@@ -200,6 +203,22 @@ async def test_get_subtitles_returns_empty_on_malformed_json(
     subs = await client.get_subtitles("movie", "tt1234567")
 
     assert subs == []
+
+
+async def test_download_subtitle_rejects_internal_host(client: StremioAddonClient) -> None:
+    result = await client.download_subtitle("https://127.0.0.1/admin")
+
+    assert result is None
+    client._client.get.assert_not_awaited()
+
+
+async def test_download_subtitle_disables_redirects(client: StremioAddonClient) -> None:
+    client._client.get.return_value = _FakeResponse(content=b"subtitle")
+
+    result = await client.download_subtitle("https://cdn.example.com/movie.srt")
+
+    assert result == b"subtitle"
+    assert client._client.get.call_args.kwargs["follow_redirects"] is False
 
 
 async def test_base_url_strips_trailing_slash() -> None:

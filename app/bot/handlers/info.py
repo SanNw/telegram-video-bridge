@@ -18,7 +18,7 @@ from app.bot.formatting import format_help_screen, format_rich_fallback
 from app.telegram.bot_api import BotAPIClient, BotAPIError
 
 _START_TEXT = (
-    "TELERION\n\nSua sessão de cinema começa aqui.\n\n" "Use /help para abrir a central de ajuda."
+    "TELERION\n\nSua sessão de cinema começa aqui.\n\nUse /help para abrir a central de ajuda."
 )
 
 

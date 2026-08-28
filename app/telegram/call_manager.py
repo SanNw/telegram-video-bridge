@@ -12,7 +12,13 @@ from pathlib import Path
 from ntgcalls import MediaSource
 from pyrogram import Client
 from pyrogram.errors import RPCError
-from pyrogram.raw.functions.phone import CreateGroupCall, GetGroupCallStreamRtmpUrl
+from pyrogram.raw.functions.channels import GetFullChannel
+from pyrogram.raw.functions.phone import (
+    CreateGroupCall,
+    DiscardGroupCall,
+    GetGroupCallStreamRtmpUrl,
+)
+from pyrogram.raw.types import InputChannel, InputPeerChannel
 from pyrogram.raw.types.phone import GroupCallStreamRtmpUrl
 from pytgcalls import PyTgCalls
 from pytgcalls import filters as pytgcalls_filters
@@ -98,12 +104,18 @@ class TelegramCallManager:
             await self.leave_call()
         self._state = CallState.CONNECTING
         peer = await self._client.resolve_peer(self._chat_id)
+        if peer is None:
+            raise RuntimeError("O chat de transmissão não pôde ser resolvido.")
         try:
-            await self._client.invoke(CreateGroupCall(peer=peer, random_id=secrets.randbits(31), rtmp_stream=True, title="Telerion"))  # type: ignore[arg-type]
+            await self._client.invoke(
+                CreateGroupCall(
+                    peer=peer, random_id=secrets.randbits(31), rtmp_stream=True, title="Telerion"
+                )
+            )
         except RPCError as exc:
             if "GROUPCALL_ALREADY_STARTED" not in str(exc):
                 raise
-        endpoint = await self._client.invoke(GetGroupCallStreamRtmpUrl(peer=peer, revoke=False))  # type: ignore[arg-type]
+        endpoint = await self._client.invoke(GetGroupCallStreamRtmpUrl(peer=peer, revoke=False))
         if not isinstance(endpoint, GroupCallStreamRtmpUrl):
             raise RuntimeError("O Telegram não retornou um endpoint RTMP válido.")
         self._state = CallState.CONNECTED
@@ -163,6 +175,27 @@ class TelegramCallManager:
             with contextlib.suppress(NotInCallError, NoActiveGroupCall):
                 await self._call_py.leave_call(self._chat_id)
             self._state = CallState.DISCONNECTED
+
+    async def end_call(self) -> None:
+        """Sai do transporte e encerra a live RTMP ativa no Telegram."""
+        rtmp_active = self._rtmp_active
+        try:
+            if rtmp_active:
+                peer = await self._client.resolve_peer(self._chat_id)
+                if isinstance(peer, InputPeerChannel):
+                    full = await self._client.invoke(
+                        GetFullChannel(
+                            channel=InputChannel(
+                                channel_id=peer.channel_id,
+                                access_hash=peer.access_hash,
+                            )
+                        )
+                    )
+                    call = getattr(getattr(full, "full_chat", None), "call", None)
+                    if call is not None:
+                        await self._client.invoke(DiscardGroupCall(call=call))
+        finally:
+            await self.leave_call()
 
     async def _on_disconnected(self, _update: Update) -> None:
         if self._state == CallState.RECONNECTING or self._last_pipes is None:

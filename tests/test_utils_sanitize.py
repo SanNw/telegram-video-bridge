@@ -99,3 +99,18 @@ def test_unsupported_scheme_raises(tmp_path: Path) -> None:
 def test_url_without_host_raises(tmp_path: Path) -> None:
     with pytest.raises(InvalidSourceError, match="host"):
         resolve_source("http:///video.mp4", tmp_path)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/admin",
+        "http://10.0.0.1/video.mp4",
+        "http://169.254.169.254/latest/meta-data/",
+        "https://[::1]/video.mp4",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ],
+)
+def test_remote_source_rejects_internal_hosts(tmp_path: Path, url: str) -> None:
+    with pytest.raises(InvalidSourceError, match="interno"):
+        resolve_source(url, tmp_path)

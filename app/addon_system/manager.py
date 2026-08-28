@@ -141,9 +141,7 @@ class AddonManager:
     async def _close_quietly(loaded: LoadedAddon) -> None:
         try:
             await loaded.instance.close()
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 - liberar recurso de terceiro não pode derrubar o reload
+        except Exception as exc:  # noqa: BLE001 - liberar recurso de terceiro não pode derrubar o reload
             _logger.warning(
                 "Erro ao fechar addon antigo {name}: {err}", name=loaded.manifest.name, err=exc
             )

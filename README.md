@@ -27,28 +27,10 @@ Telerion conecta um bot privado, uma conta dedicada do Telegram e um pipeline FF
 | 📚 Fila persistente e controles | 💬 Legendas PT-BR com ajuste de sincronia |
 | 🧲 Download progressivo via qBittorrent | 🧹 Liberação e limpeza automática |
 
-<details>
-<summary><strong>▶ Ver o fluxo completo</strong></summary>
+### Entenda o projeto visualmente
 
-```mermaid
-flowchart LR
-    A[Administrador] -->|comandos privados| B[Bot Telerion]
-    B --> C{Origem}
-    C -->|/find| D[TMDB + Addons]
-    C -->|/canal| E[Acervo Telegram]
-    C -->|/play| F[Arquivo ou URL]
-    D --> G[qBittorrent / HTTP]
-    E --> H[Fila persistente]
-    F --> H
-    G --> H
-    H --> I[FFmpeg]
-    I -->|principal| J[RTMP]
-    I -->|fallback| K[PyTgCalls]
-    J --> L[Live do canal]
-    K --> L
-```
-
-</details>
+- [Arquitetura geral](docs/architecture.html) — componentes, responsabilidades e integrações.
+- [Fluxo completo de reprodução](docs/playback-flow.html) — da busca ao encerramento e à limpeza do arquivo.
 
 ## 🍿 Estreia rápida
 
@@ -146,7 +128,7 @@ docker build -f docker/Dockerfile -t telerion:local .
 
 ## Painel de reproducao e legendas
 
-Ao escolher uma fonte, a propria Rich Message vira o painel de reproducao. Pausa, retomada, stop, skip, reinicio, volume, fila e legendas atualizam essa mesma mensagem, sem criar respostas sucessivas no chat.
+Ao escolher uma fonte, a própria Rich Message vira o painel de reprodução. Pausa, retomada, stop, skip, reinício, volume, fila e legendas atualizam essa mesma mensagem, sem criar respostas sucessivas no chat. **Parar** encerra a live e preserva o arquivo; **Sair** encerra a live e remove do qBittorrent o torrent atual com seus arquivos.
 
 O submenu permite ligar ou desligar a faixa, ajustar a sincronia e escolher arquivos `.srt` diretamente em `QBITTORRENT_LOCAL_PATH/.subtitles`. Com `OPENSUBTITLES_API_KEY`, `OPENSUBTITLES_USERNAME` e `OPENSUBTITLES_PASSWORD`, tambem busca alternativas PT-BR/PT na API oficial. Downloads sao limitados a 2 MB. Os comandos `/legenda` e `/subdelay` continuam disponiveis como fallback.
 

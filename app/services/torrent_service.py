@@ -94,7 +94,13 @@ class TorrentService:
         save_path = Path(status.save_path) if status else self._settings.qbittorrent_save_path
         if _IS_POSIX and PureWindowsPath(str(save_path)).drive:
             save_path = self._settings.qbittorrent_local_path
-        local_path = str((save_path / video_file.path).resolve())
+        save_path = save_path.resolve()
+        resolved_file = (save_path / video_file.path).resolve()
+        if not resolved_file.is_relative_to(save_path):
+            raise TorrentResolutionError(
+                "Caminho do torrent fora do diretório de download permitido."
+            )
+        local_path = str(resolved_file)
         self._handles_by_path[local_path] = handle
         _logger.info("Buffer atingido, iniciando reprodução: {path}", path=local_path)
         return local_path
@@ -116,6 +122,15 @@ class TorrentService:
             await self._backend.remove(handle)
         except (QBittorrentAuthError, QBittorrentUnavailableError) as exc:
             _logger.warning("Falha ao remover torrent {hash}: {err}", hash=handle, err=exc)
+
+    async def delete(self, source: MediaSource) -> None:
+        """Remove explicitamente o torrent e seus arquivos, independente da configuração."""
+        handle = self._handles_by_path.pop(source.raw, None)
+        if handle is not None:
+            try:
+                await self._backend.remove(handle)
+            except (QBittorrentAuthError, QBittorrentUnavailableError) as exc:
+                raise TorrentResolutionError(f"Não foi possível apagar o torrent: {exc}") from exc
 
     async def close(self) -> None:
         """Fecha o backend subjacente (ex.: `httpx.AsyncClient` do `QBittorrentClient`)."""

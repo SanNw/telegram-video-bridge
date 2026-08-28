@@ -463,8 +463,10 @@ async def test_pump_stream_logs_ffmpeg_output(
         await streamer.start(_LOCAL_SOURCE)
         try:
             await _wait_until(
-                lambda: (settings.log_dir / "ffmpeg.log").exists()
-                and "linha-stderr-marcador" in (settings.log_dir / "ffmpeg.log").read_text()
+                lambda: (
+                    (settings.log_dir / "ffmpeg.log").exists()
+                    and "linha-stderr-marcador" in (settings.log_dir / "ffmpeg.log").read_text()
+                )
             )
         finally:
             await streamer.stop()

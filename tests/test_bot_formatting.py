@@ -644,6 +644,7 @@ def test_controls_screen_exposes_every_playback_action() -> None:
         "control:pause",
         "control:resume",
         "control:stop",
+        "control:exit",
         "control:skip",
         "control:restart",
         "control:loop:off",

@@ -247,9 +247,7 @@ async def test_source_success_replaces_progress_with_playback_panel(
     )
     bot_api = _FakeBotAPI()
     authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
-    addons.register_search(
-        client, service, authorized, True, bot_api=bot_api, playback=playback
-    )  # type: ignore[arg-type]
+    addons.register_search(client, service, authorized, True, bot_api=bot_api, playback=playback)  # type: ignore[arg-type]
     await dispatch_callback(client, _callback("movie:0", 111))
 
     await dispatch_callback(client, _callback("source:0", 111))
@@ -305,9 +303,7 @@ async def test_expired_source_token_returns_alert(make_settings: Any) -> None:
     client = FakeClient()
     bot_api = _FakeBotAPI()
     authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
-    addons.register_search(
-        client, _RichAddonService(), authorized, True, bot_api=bot_api
-    )  # type: ignore[arg-type]
+    addons.register_search(client, _RichAddonService(), authorized, True, bot_api=bot_api)  # type: ignore[arg-type]
     callback = _callback("source:99", 111)
 
     await dispatch_callback(client, callback)
@@ -322,9 +318,7 @@ async def test_bot_api_rejection_falls_back_without_technical_alert(make_setting
 
     client = FakeClient()
     authorized = build_authorized_filter(make_settings(authorized_user_ids=[111]))
-    addons.register_search(
-        client, _RichAddonService(), authorized, True, bot_api=_FailingBotAPI()
-    )  # type: ignore[arg-type]
+    addons.register_search(client, _RichAddonService(), authorized, True, bot_api=_FailingBotAPI())  # type: ignore[arg-type]
     callback = _callback("movie:0", 111)
 
     await dispatch_callback(client, callback)

@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from app.utils.logging import get_logger
+from app.utils.sanitize import InvalidSourceError, validate_remote_url
 
 _logger = get_logger("services")
 
@@ -144,10 +145,13 @@ class StremioAddonClient:
 
     async def download_subtitle(self, url: str) -> bytes | None:
         """Baixa uma legenda UTF-8, limitada a 2 MB."""
-        if not url.startswith("https://"):
+        try:
+            validate_remote_url(url, allowed_schemes=frozenset({"https"}))
+        except InvalidSourceError:
+            _logger.warning("Legenda descartada por URL insegura.")
             return None
         try:
-            response = await self._client.get(url)
+            response = await self._client.get(url, follow_redirects=False)
             response.raise_for_status()
         except httpx.HTTPError as exc:
             _logger.warning("Falha ao baixar legenda: {err}", err=exc)

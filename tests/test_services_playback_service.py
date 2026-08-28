@@ -139,6 +139,7 @@ class _FakeCallManager:
         self.joined: list[tuple[Path, Path]] = []
         self.paused = False
         self.left = False
+        self.ended = False
         self.volume: int | None = None
         self.client = MagicMock()
         self._on_permanent_failure: Callable[[], object] | None = None
@@ -175,6 +176,10 @@ class _FakeCallManager:
 
     async def leave_call(self) -> None:
         self.left = True
+
+    async def end_call(self) -> None:
+        self.left = True
+        self.ended = True
 
     async def change_volume(self, volume: int) -> None:
         self.volume = volume
@@ -348,6 +353,31 @@ async def test_stop_playback_stops_streamer_and_leaves_call(
     _, streamer, call = _fakes(service)
     assert streamer.stopped is True
     assert call.left is True
+
+
+async def test_exit_and_delete_ends_call_and_deletes_current_source(
+    make_service: Callable[..., PlaybackService], tmp_path: Path
+) -> None:
+    service = make_service()
+    deleted: list[str] = []
+
+    async def delete_source(source: MediaSource) -> None:
+        deleted.append(source.raw)
+
+    service.set_source_deleted_callback(delete_source)
+    media_dir = tmp_path / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    movie = media_dir / "a.mp4"
+    movie.write_bytes(b"x")
+    await service.play("a.mp4", requested_by=1)
+
+    await service.exit_and_delete()
+
+    _, streamer, call = _fakes(service)
+    assert streamer.stopped is True
+    assert call.ended is True
+    assert deleted == [str(movie.resolve())]
+    assert service.queue_snapshot().current is None
 
 
 async def test_skip_raises_when_nothing_playing(

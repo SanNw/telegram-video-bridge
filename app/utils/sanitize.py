@@ -7,10 +7,11 @@ e restringe caminhos locais ao diretório de mídia configurado.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse
 
 
 class SourceType(StrEnum):
@@ -30,6 +31,7 @@ class InvalidSourceError(ValueError):
 _ALLOWED_LOCAL_EXTENSIONS = frozenset({".mp4", ".mkv", ".avi", ".mov", ".ts", ".m2ts"})
 _ALLOWED_SCHEMES = frozenset({"http", "https", "rtmp", "rtmps", "rtsp"})
 _CONTROL_CHARS = frozenset({"\n", "\r", "\x00"})
+_INTERNAL_HOST_SUFFIXES = (".internal", ".local", ".localhost", ".home.arpa")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,15 +62,12 @@ def resolve_source(raw_source: str, media_root: Path) -> MediaSource:
 
     parsed = urlparse(candidate)
     if parsed.scheme:
-        return _resolve_remote_source(candidate, parsed.scheme, parsed.netloc)
+        return _resolve_remote_source(candidate, parsed.scheme)
     return _resolve_local_source(candidate, media_root)
 
 
-def _resolve_remote_source(candidate: str, scheme: str, netloc: str) -> MediaSource:
-    if scheme not in _ALLOWED_SCHEMES:
-        raise InvalidSourceError(f"Esquema de URL não suportado: {scheme!r}")
-    if not netloc:
-        raise InvalidSourceError("URL sem host válido.")
+def _resolve_remote_source(candidate: str, scheme: str) -> MediaSource:
+    validate_remote_url(candidate, allowed_schemes=_ALLOWED_SCHEMES)
     if scheme in {"rtmp", "rtmps"}:
         return MediaSource(raw=candidate, type=SourceType.RTMP)
     if scheme == "rtsp":
@@ -76,6 +75,28 @@ def _resolve_remote_source(candidate: str, scheme: str, netloc: str) -> MediaSou
     if candidate.lower().split("?", 1)[0].endswith(".m3u8"):
         return MediaSource(raw=candidate, type=SourceType.HLS)
     return MediaSource(raw=candidate, type=SourceType.HTTP)
+
+
+def validate_remote_url(
+    candidate: str, *, allowed_schemes: frozenset[str]
+) -> ParseResult:
+    """Rejeita URLs destinadas diretamente a redes ou nomes internos."""
+    parsed = urlparse(candidate)
+    if parsed.scheme not in allowed_schemes:
+        raise InvalidSourceError(f"Esquema de URL não suportado: {parsed.scheme!r}")
+    if not parsed.netloc or not parsed.hostname:
+        raise InvalidSourceError("URL sem host válido.")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        if hostname == "localhost" or hostname.endswith(_INTERNAL_HOST_SUFFIXES):
+            raise InvalidSourceError("Acesso a host interno não é permitido.") from None
+    else:
+        if not address.is_global:
+            raise InvalidSourceError("Acesso a host interno não é permitido.")
+    return parsed
 
 
 def _resolve_local_source(candidate: str, media_root: Path) -> MediaSource:

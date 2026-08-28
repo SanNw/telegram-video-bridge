@@ -53,6 +53,7 @@ class PlaybackService:
         self._paused_at_seconds: float | None = None
         self._volume = 100
         self._source_released_callbacks: list[Callable[[MediaSource], Awaitable[None]]] = []
+        self._source_deleted_callbacks: list[Callable[[MediaSource], Awaitable[None]]] = []
 
         self._streamer.set_completion_callback(self._handle_item_completed)
         self._streamer.set_permanent_failure_callback(self._handle_streamer_permanent_failure)
@@ -68,6 +69,12 @@ class PlaybackService:
         para decidir se remove o torrent do qBittorrent ou o mantém em seed.
         """
         self._source_released_callbacks.append(callback)
+
+    def set_source_deleted_callback(
+        self, callback: Callable[[MediaSource], Awaitable[None]]
+    ) -> None:
+        """Registra limpeza explícita usada por `Sair` para apagar a fonte atual."""
+        self._source_deleted_callbacks.append(callback)
 
     async def _handle_source_released(self, source: MediaSource) -> None:
         results = await asyncio.gather(
@@ -191,6 +198,24 @@ class PlaybackService:
                 raise NothingPlayingError("Nada está tocando no momento.")
             await self._stop_active_locked()
             await self._queue.discard_current()
+
+    async def exit_and_delete(self) -> None:
+        """Encerra a chamada e apaga a fonte atual, preservando a fila pendente."""
+        async with self._lock:
+            current = self._queue.snapshot().current
+            if not self._is_active or current is None:
+                raise NothingPlayingError("Nada está tocando no momento.")
+            await self._streamer.stop(notify_release=False)
+            try:
+                await self._call_manager.end_call()
+                await asyncio.gather(
+                    *(callback(current.source) for callback in self._source_deleted_callbacks)
+                )
+            finally:
+                self._is_active = False
+                self._current_started_at = None
+                self._paused_at_seconds = None
+                await self._queue.discard_current()
 
     async def skip(self) -> QueueItem | None:
         """Pula para o próximo item da fila (ignora loop de item). `None` se a fila esvaziou."""
@@ -396,7 +421,7 @@ class PlaybackService:
 
     async def _stop_active_locked(self) -> None:
         await self._streamer.stop()
-        await self._call_manager.leave_call()
+        await self._call_manager.end_call()
         self._is_active = False
         self._current_started_at = None
         self._paused_at_seconds = None

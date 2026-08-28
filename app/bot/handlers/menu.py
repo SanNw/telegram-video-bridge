@@ -26,7 +26,7 @@ from app.bot.formatting import (
 from app.player.models import LoopMode
 from app.services.addon_service import AddonService
 from app.services.channel_media_service import ChannelMediaService
-from app.services.exceptions import InvalidVolumeError, NothingPlayingError
+from app.services.exceptions import InvalidVolumeError, NothingPlayingError, TorrentResolutionError
 from app.services.playback_service import PlaybackService
 from app.services.subtitle_service import SubtitleService
 from app.telegram.bot_api import BotAPIClient, BotAPIError
@@ -191,7 +191,7 @@ def register(
         except BotAPIError:
             text, markup = format_rich_fallback(screen)
             await message.edit_text(text, reply_markup=markup)
-        except (NothingPlayingError, InvalidVolumeError) as exc:
+        except (NothingPlayingError, InvalidVolumeError, TorrentResolutionError) as exc:
             await callback_query.answer(str(exc), show_alert=True)
             return
         await callback_query.answer()
@@ -268,6 +268,8 @@ async def _screen(
             await playback.resume()
         elif action[1] == "stop":
             await playback.stop_playback()
+        elif action[1] == "exit":
+            await playback.exit_and_delete()
         elif action[1] == "skip":
             await playback.skip()
         elif action[1] == "restart":

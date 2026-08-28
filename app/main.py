@@ -53,6 +53,8 @@ async def _run() -> None:
     channel_media_service = ChannelMediaService(
         settings, service.client, service, addon_service, tmdb_service
     )
+    service.set_source_deleted_callback(torrent_service.delete)
+    service.set_source_deleted_callback(channel_media_service.release)
     opensubtitles_client = None
     if settings.opensubtitles_enabled:
         assert settings.opensubtitles_api_key is not None

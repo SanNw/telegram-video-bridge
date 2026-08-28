@@ -293,6 +293,7 @@ async def test_remaining_control_buttons_call_service_methods(make_settings: Any
     playback.pause = AsyncMock()  # type: ignore[method-assign]
     playback.resume = AsyncMock()  # type: ignore[method-assign]
     playback.stop_playback = AsyncMock()  # type: ignore[method-assign]
+    playback.exit_and_delete = AsyncMock()  # type: ignore[method-assign]
     playback.skip = AsyncMock(return_value=None)  # type: ignore[method-assign]
     bot_api = _FakeBotAPI()
     menu.register(
@@ -308,6 +309,7 @@ async def test_remaining_control_buttons_call_service_methods(make_settings: Any
         "control:pause",
         "control:resume",
         "control:stop",
+        "control:exit",
         "control:skip",
         "control:loop:queue",
     ):
@@ -316,6 +318,7 @@ async def test_remaining_control_buttons_call_service_methods(make_settings: Any
     playback.pause.assert_awaited_once()  # type: ignore[attr-defined]
     playback.resume.assert_awaited_once()  # type: ignore[attr-defined]
     playback.stop_playback.assert_awaited_once()  # type: ignore[attr-defined]
+    playback.exit_and_delete.assert_awaited_once()  # type: ignore[attr-defined]
     playback.skip.assert_awaited_once()  # type: ignore[attr-defined]
     assert playback.loop_calls
 

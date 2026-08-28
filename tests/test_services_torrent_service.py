@@ -39,6 +39,7 @@ class _FakeBackend(TorrentBackend):
         self.removed: list[str] = []
         self.selected: list[tuple[str, int]] = []
         self.select_exception: Exception | None = None
+        self.remove_exception: Exception | None = None
         self.closed = False
         self._status_sequence: dict[str, list[TorrentStatus]] = {}
         self._files_sequence: dict[str, list[list[TorrentFile]]] = {}
@@ -72,6 +73,8 @@ class _FakeBackend(TorrentBackend):
         return sequence[min(index, len(sequence) - 1)]
 
     async def remove(self, handle: str) -> None:
+        if self.remove_exception is not None:
+            raise self.remove_exception
         self.removed.append(handle)
 
     async def select_file(self, handle: str, file_index: int) -> None:
@@ -171,6 +174,23 @@ async def test_resolve_maps_windows_qbittorrent_path_to_container_media(
     path = await service.resolve(_candidate())
 
     assert Path(path) == (tmp_path / "Movie.mkv").resolve()
+
+
+async def test_resolve_rejects_torrent_file_outside_download_directory(
+    torrent_settings: Settings,
+    backend: _FakeBackend,
+    tmp_path: Path,
+) -> None:
+    settings = torrent_settings.model_copy(update={"qbittorrent_save_path": tmp_path / "downloads"})
+    service = TorrentService(settings, backend=backend)
+    backend.program_status(
+        "abc123", [_status(has_metadata=True, progress=1.0, save_path=str(tmp_path / "downloads"))]
+    )
+    video = _file(0, "../outside.mkv", 10 * 1024 * 1024, 10 * 1024 * 1024)
+    backend.program_files("abc123", [[video]])
+
+    with pytest.raises(TorrentResolutionError, match="diretório de download"):
+        await service.resolve(_candidate())
 
 
 async def test_resolve_uses_magnet_uri_built_from_info_hash(
@@ -330,6 +350,30 @@ async def test_release_ignores_untracked_source(
     await service.release(MediaSource(raw="/media/other.mp4", type=SourceType.LOCAL_FILE))
 
     assert backend.removed == []
+
+
+async def test_delete_removes_torrent_and_files_even_when_auto_remove_is_disabled(
+    torrent_settings: Settings, backend: _FakeBackend
+) -> None:
+    service = TorrentService(torrent_settings, backend=backend)
+    source = MediaSource(raw="/media/torrents/movie.mkv", type=SourceType.LOCAL_FILE)
+    service._handles_by_path[source.raw] = "abc123"  # noqa: SLF001
+
+    await service.delete(source)
+
+    assert backend.removed == ["abc123"]
+
+
+async def test_delete_reports_qbittorrent_failure(
+    torrent_settings: Settings, backend: _FakeBackend
+) -> None:
+    service = TorrentService(torrent_settings, backend=backend)
+    source = MediaSource(raw="/media/torrents/movie.mkv", type=SourceType.LOCAL_FILE)
+    service._handles_by_path[source.raw] = "abc123"  # noqa: SLF001
+    backend.remove_exception = QBittorrentUnavailableError("offline")
+
+    with pytest.raises(TorrentResolutionError, match="apagar"):
+        await service.delete(source)
 
 
 # ---------------------------------------------------------------------------

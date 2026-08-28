@@ -334,7 +334,7 @@ _HELP_TOPICS = {
     ),
     "subtitles": (
         "LEGENDAS",
-        "/legenda <on|off> — ativar ou desativar\n" "/subdelay <ms> — ajustar sincronização",
+        "/legenda <on|off> — ativar ou desativar\n/subdelay <ms> — ajustar sincronização",
     ),
     "system": (
         "SISTEMA",
@@ -510,9 +510,7 @@ def format_candidate_page(
 
 def format_now_playing_screen(state: PlaybackState) -> dict[str, object]:
     text = (
-        f"▶️ {state.current.source.raw}"
-        if state.current is not None
-        else "Nada está tocando agora."
+        f"▶️ {state.current.source.raw}" if state.current is not None else "Nada está tocando agora."
     )
     return {
         "blocks": [
@@ -563,6 +561,7 @@ def format_controls_screen(status: ServiceStatus) -> dict[str, object]:
                     for volume in (50, 100, 150, 200)
                 )
             ),
+            _button_row(_button("Sair", "control:exit", "danger")),
             _button_row(_button("Início", "menu:home")),
         ]
     }
@@ -597,6 +596,7 @@ def format_playback_panel(status: ServiceStatus, state: PlaybackState) -> dict[s
                 _button("Legendas", "subtitle:menu"),
                 _button("Fila", "menu:queue"),
             ),
+            _button_row(_button("Sair", "control:exit", "danger")),
         ]
     }
 

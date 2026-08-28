@@ -333,6 +333,10 @@ logs persistentes.
 
 ## 7. Arquitetura interna
 
+Consulte também os diagramas editoriais de [arquitetura geral](architecture.html) e do
+[fluxo de reprodução](playback-flow.html). Eles mostram as fronteiras entre o bot,
+os serviços externos, o pipeline de mídia e a chamada do Telegram.
+
 ```text
 app/main.py
   -> Settings

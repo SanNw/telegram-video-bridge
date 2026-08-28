@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from ntgcalls import MediaSource
+from pyrogram.raw.types import InputGroupCall, InputPeerChannel
 from pyrogram.raw.types.phone import GroupCallStreamRtmpUrl
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 
@@ -165,6 +166,27 @@ async def test_leave_call_swallows_no_active_group_call(
     manager, fake_call_py = make_call_manager()
     fake_call_py.leave_call.side_effect = NoActiveGroupCall()
     await manager.leave_call()
+
+
+async def test_end_call_discards_active_rtmp_group_call(
+    make_call_manager: Callable[..., tuple[TelegramCallManager, _FakePyTgCalls]],
+) -> None:
+    manager, fake_call_py = make_call_manager()
+    manager._rtmp_active = True  # noqa: SLF001
+    call = InputGroupCall(id=789, access_hash=101112)
+    manager.client.resolve_peer = AsyncMock(  # type: ignore[method-assign]
+        return_value=InputPeerChannel(channel_id=123, access_hash=456)
+    )
+    manager.client.invoke = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[MagicMock(full_chat=MagicMock(call=call)), None]
+    )
+
+    await manager.end_call()
+
+    assert manager.client.invoke.await_count == 2
+    assert manager.client.invoke.await_args_list[1].args[0].call == call
+    fake_call_py.leave_call.assert_awaited_once()
+    assert manager.healthcheck().state is CallState.DISCONNECTED
 
 
 async def test_pause_and_resume_swallow_not_in_call_error(
