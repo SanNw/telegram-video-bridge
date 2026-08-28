@@ -29,8 +29,21 @@ Telerion conecta um bot privado, uma conta dedicada do Telegram e um pipeline FF
 
 ### Entenda o projeto visualmente
 
-- [Arquitetura geral](docs/architecture.html) — componentes, responsabilidades e integrações.
-- [Fluxo completo de reprodução](docs/playback-flow.html) — da busca ao encerramento e à limpeza do arquivo.
+#### Arquitetura geral
+
+<a href="docs/architecture.html">
+  <img src="docs/architecture.svg" alt="Arquitetura geral do Telerion" width="100%">
+</a>
+
+Componentes, responsabilidades e integrações. [Abra a versão editorial completa](docs/architecture.html).
+
+#### Fluxo completo de reprodução
+
+<a href="docs/playback-flow.html">
+  <img src="docs/playback-flow.svg" alt="Fluxo completo de reprodução do Telerion" width="100%">
+</a>
+
+Da busca ao encerramento e à limpeza do arquivo. [Abra a versão editorial completa](docs/playback-flow.html).
 
 ## 🍿 Estreia rápida
 
